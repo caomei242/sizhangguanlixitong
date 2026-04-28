@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>草莓私帐管理系统 · 交互 UI 优化稿</title>
+  <style>
+    :root {
+      --page: #e9eef5;
+      --shell: #f4f7fb;
+      --side: #f8fafc;
+      --surface: #ffffff;
+      --soft: #f6f8fc;
+      --soft-blue: #eef4ff;
+      --line: #dbe4f2;
+      --line-soft: #e8eef8;
+      --text: #20304a;
+      --strong: #17253d;
+      --muted: #74829a;
+      --brand: #ff4b6e;
+      --blue: #4a7cff;
+      --green: #1f9d73;
+      --amber: #d28b18;
+      --red: #d6455d;
+      --green-soft: #e8f8f1;
+      --amber-soft: #fff6df;
+      --red-soft: #fff0f2;
+      --shadow: 0 22px 60px rgba(32, 48, 74, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .app { min-height: 100vh; padding: 18px; }
+    .window {
+      min-height: calc(100vh - 36px);
+      display: grid;
+      grid-template-columns: 232px minmax(1040px, 1fr);
+      overflow: hidden;
+      background: var(--shell);
+      border: 1px solid #d8e1ef;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      padding: 18px;
+      background: var(--side);
+      border-right: 1px solid #e2e8f0;
+    }
+    .brand-title {
+      color: var(--brand);
+      font-size: 24px;
+      font-weight: 900;
+      line-height: 1.05;
+      word-break: keep-all;
+    }
+    .brand-subtitle {
+      margin-top: 4px;
+      color: #7d8aa5;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .sample-pill {
+      padding: 8px 10px;
+      color: #9d6d16;
+      background: var(--amber-soft);
+      border: 1px solid #f0d89a;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+    .nav {
+      display: grid;
+      gap: 7px;
+      padding: 7px;
+      background: rgba(255,255,255,.82);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .nav button {
+      width: 100%;
+      min-height: 40px;
+      padding: 9px 12px;
+      text-align: left;
+      color: #52627f;
+      background: transparent;
+      border: 0;
+      border-radius: 12px;
+      font-weight: 800;
+    }
+    .nav button:hover { background: var(--soft-blue); color: #3159c8; }
+    .nav button.active { background: var(--blue); color: white; }
+    .side-note {
+      margin-top: auto;
+      padding: 13px;
+      color: var(--muted);
+      background: var(--soft-blue);
+      border: 1px solid #d6e2ff;
+      border-radius: 16px;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .workspace {
+      min-width: 0;
+      overflow: auto;
+      background: #f6f8fc;
+    }
+    .workspace-inner {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 74px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,.98);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+    }
+    .page-title {
+      margin: 0;
+      color: var(--strong);
+      font-size: 20px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+    .page-meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .top-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .select, .input {
+      min-height: 36px;
+      padding: 7px 10px;
+      color: var(--text);
+      background: white;
+      border: 1px solid #d9e2f1;
+      border-radius: 10px;
+      outline: none;
+    }
+    .button {
+      min-height: 36px;
+      padding: 7px 13px;
+      color: #fff;
+      background: var(--blue);
+      border: 0;
+      border-radius: 14px;
+      font-weight: 800;
+    }
+    .button.secondary {
+      color: #3f67d9;
+      background: var(--soft-blue);
+      border: 1px solid #cddcff;
+    }
+    .button.danger {
+      color: var(--red);
+      background: var(--red-soft);
+      border: 1px solid #f2c3cb;
+    }
+
+    .page { display: none; gap: 14px; }
+    .page.active { display: grid; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 7px;
+      background: rgba(255,255,255,.92);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .tab-button {
+      min-height: 34px;
+      padding: 7px 12px;
+      color: #52627f;
+      background: transparent;
+      border: 0;
+      border-radius: 12px;
+      font-weight: 800;
+    }
+    .tab-button.active { color: #fff; background: var(--blue); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 16px;
+    }
+    .panel-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .panel-title {
+      color: #1f2b44;
+      font-size: 16px;
+      font-weight: 900;
+    }
+    .panel-subtitle {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+    .layout-rail { display: grid; grid-template-columns: 520px minmax(0, 1fr); gap: 12px; align-items: stretch; }
+    .layout-detail { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; }
+    .reminder-workspace {
+      display: grid;
+      grid-template-columns: 420px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      margin-top: 12px;
+    }
+    .metric {
+      min-height: 104px;
+      padding: 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .metric-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: #7a89a6;
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .metric-value {
+      margin-top: 12px;
+      color: var(--strong);
+      font-size: 25px;
+      font-weight: 950;
+    }
+    .metric-note {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .tag.blue { color: #3f67d9; background: var(--soft-blue); border: 1px solid #d5e1ff; }
+    .tag.green { color: #1f7d5b; background: var(--green-soft); border: 1px solid #bfe8d6; }
+    .tag.amber { color: #9d6d16; background: var(--amber-soft); border: 1px solid #f1dca6; }
+    .tag.red { color: #bd3650; background: var(--red-soft); border: 1px solid #f2c3cb; }
+    .tag.gray { color: #66758f; background: #f1f5fb; border: 1px solid #dce5f2; }
+
+    .row-list { display: grid; gap: 8px; }
+    .info-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) auto auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 54px;
+      padding: 10px 12px;
+      background: #fff;
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+    }
+    .info-row.selected { background: #f1f6ff; border-color: #bcd0ff; }
+    .row-title { color: #1f2b44; font-weight: 900; }
+    .row-meta { margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .amount { color: #1b2a45; font-weight: 950; white-space: nowrap; }
+    .amount.red { color: var(--red); }
+    .amount.green { color: var(--green); }
+
+    .reminder-card-list { display: grid; gap: 10px; }
+    .reminder-card {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      background: #fff;
+      border: 1px solid var(--line-soft);
+      border-left: 5px solid #cfd8e8;
+      border-radius: 16px;
+    }
+    .reminder-card.selected { background: #f4f8ff; border-color: #bcd0ff; border-left-color: var(--blue); }
+    .reminder-card.red { border-left-color: var(--red); }
+    .reminder-card.amber { border-left-color: var(--amber); }
+    .reminder-card.green { border-left-color: var(--green); }
+    .reminder-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .reminder-card-title {
+      color: #1f2b44;
+      font-size: 14px;
+      font-weight: 950;
+      line-height: 1.35;
+    }
+    .reminder-card-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      line-height: 1.55;
+    }
+    .reminder-card-foot {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 2px;
+    }
+    .detail-stack {
+      display: grid;
+      gap: 12px;
+    }
+    .note-sheet {
+      min-height: 210px;
+      padding: 14px;
+      color: #253550;
+      background: #fbfdff;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      line-height: 1.75;
+      white-space: pre-wrap;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+    }
+    .table th, .table td {
+      padding: 10px 11px;
+      text-align: left;
+      border-bottom: 1px solid var(--line-soft);
+      white-space: nowrap;
+    }
+    .table th {
+      color: #7a89a6;
+      background: #f8fbff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .table tr:last-child td { border-bottom: 0; }
+    .table td.num { text-align: right; font-weight: 900; }
+
+    .chart {
+      min-height: 250px;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(to right, transparent 0 9%, #e8eef8 9% 9.4%, transparent 9.4% 18.5%),
+        repeating-linear-gradient(to top, #f8fbff 0 39px, #e8eef8 40px);
+      border: 1px solid var(--line-soft);
+      border-radius: 18px;
+    }
+    .chart svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .chart-caption {
+      position: absolute;
+      top: 14px;
+      left: 16px;
+      color: #5d6c86;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 360px)); gap: 10px 20px; align-items: start; }
+    .field { display: grid; gap: 6px; }
+    .label { color: #63728d; font-size: 12px; font-weight: 900; }
+    .textarea {
+      width: 100%;
+      min-height: 260px;
+      padding: 13px;
+      color: #253550;
+      background: #fff;
+      border: 1px solid #d9e2f1;
+      border-radius: 16px;
+      line-height: 1.7;
+      resize: vertical;
+    }
+    .filterbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .split-note { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 12px; }
+
+    .empty-state {
+      display: grid;
+      place-items: center;
+      min-height: 210px;
+      color: var(--muted);
+      background: #fbfdff;
+      border: 1px dashed #cfdaf0;
+      border-radius: 18px;
+      font-weight: 800;
+    }
+
+    .section-stack { display: grid; gap: 12px; }
+    .compact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .wide-split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; align-items: start; }
+    .status-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 10px 12px;
+      color: #52627f;
+      background: #f8fbff;
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.5;
+    }
+    .progress {
+      height: 9px;
+      overflow: hidden;
+      background: #edf3fb;
+      border-radius: 999px;
+    }
+    .progress > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--blue);
+    }
+    .progress > span.red { background: var(--red); }
+    .progress > span.amber { background: var(--amber); }
+    .progress > span.green { background: var(--green); }
+    .mini-card {
+      padding: 12px;
+      background: #fbfdff;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+    }
+    .mini-card-title { color: #1f2b44; font-weight: 950; }
+    .mini-card-meta { margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; line-height: 1.55; }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+    }
+    .table-wrap .table { border: 0; border-radius: 0; }
+    .year-board {
+      display: grid;
+      gap: 12px;
+    }
+    .year-scroll {
+      overflow: auto;
+      max-height: 620px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .year-table {
+      min-width: 2860px;
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 12px;
+    }
+    .year-table th,
+    .year-table td {
+      min-width: 92px;
+      padding: 7px 8px;
+      text-align: right;
+      border-right: 1px solid #cfd8e7;
+      border-bottom: 1px solid #cfd8e7;
+      white-space: nowrap;
+    }
+    .year-table th:first-child,
+    .year-table td:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      min-width: 164px;
+      text-align: left;
+      font-weight: 950;
+      background: #f8fbff;
+    }
+    .year-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+    }
+    .year-table thead th:first-child { z-index: 4; }
+    .year-title-cell {
+      color: #fff;
+      background: #222a34 !important;
+      text-align: center !important;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    .quarter-cell {
+      color: #f8fafc;
+      background: #303943 !important;
+      text-align: center !important;
+      font-weight: 950;
+    }
+    .month-cell {
+      color: #1f2b44;
+      text-align: center !important;
+      font-weight: 950;
+    }
+    .month-cell.blue, .year-table td.blue { background: #dfe9fb; }
+    .month-cell.pink, .year-table td.pink { background: #ffd2d5; }
+    .year-table .subhead {
+      color: #75849e;
+      background: #f8fbff;
+      text-align: center !important;
+      font-weight: 900;
+    }
+    .year-table .row-group td,
+    .year-table .row-group th {
+      color: #f8fafc;
+      background: #202832 !important;
+      font-weight: 950;
+    }
+    .year-table .row-subtotal td,
+    .year-table .row-subtotal th {
+      background: #eef3fb !important;
+      font-weight: 950;
+    }
+    .year-table .negative { color: var(--red); font-weight: 950; }
+    .year-table .positive { color: var(--green); font-weight: 950; }
+
+    @media (max-width: 1180px) {
+      .window { grid-template-columns: 196px minmax(760px, 1fr); }
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .layout-rail, .layout-detail, .split-note, .reminder-workspace, .wide-split { grid-template-columns: 1fr; }
+      .compact-grid { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="window">
+      <aside class="sidebar">
+        <div>
+          <div class="brand-title">草莓私帐管理系统</div>
+          <div class="brand-subtitle">私人账户管理系统</div>
+        </div>
+        <div class="sample-pill">示例数据，仅用于 UI 优化稿。金额、日期、账户均为假数据。</div>
+        <nav class="nav" aria-label="主导航">
+          <button class="nav-button active" data-page-target="dashboard">月度看板</button>
+          <button class="nav-button" data-page-target="accounts">私人账户</button>
+          <button class="nav-button" data-page-target="transactions">流水记录</button>
+          <button class="nav-button" data-page-target="budgets">预算计划</button>
+          <button class="nav-button" data-page-target="reminders">充值续费</button>
+          <button class="nav-button" data-page-target="imports">数据导入</button>
+          <button class="nav-button" data-page-target="settings">设置</button>
+        </nav>
+        <div class="side-note">本地优先、保守口径、可追溯。待确认数据不进入正式统计。</div>
+      </aside>
+
+      <main class="workspace">
+        <div class="workspace-inner">
+          <header class="topbar">
+            <div>
+              <h1 class="page-title" id="pageTitle">月度看板</h1>
+              <div class="page-meta" id="pageMeta">范围：2026-04 · 数据库：private-ledger.db</div>
+            </div>
+            <div class="top-actions">
+              <select class="select"><option>月</option><option>季</option><option>年</option></select>
+              <select class="select"><option>2026-04</option><option>2026-03</option><option>2026-02</option></select>
+              <button class="button secondary">导出 JSON</button>
+              <button class="button">新增流水</button>
+            </div>
+          </header>
+
+          <section class="page active" data-page="dashboard" data-title="月度看板" data-meta="范围：2026-04 · 数据库：private-ledger.db">
+            <div class="tabs">
+              <button class="tab-button active" data-tab-target="dashboard-overview">总览</button>
+              <button class="tab-button" data-tab-target="dashboard-accounts">账户余额</button>
+              <button class="tab-button" data-tab-target="dashboard-reminders">近期待处理</button>
+              <button class="tab-button" data-tab-target="dashboard-transactions">最近流水</button>
+            </div>
+            <div class="tab-panel active" data-tab="dashboard-overview">
+              <div class="grid-4">
+                <div class="metric"><div class="metric-label">本月预算 <span class="tag blue">自动合计</span></div><div class="metric-value">¥11,900.00</div><div class="metric-note">当月生效预算项</div></div>
+                <div class="metric"><div class="metric-label">已确认支出 <span class="tag gray">已确认</span></div><div class="metric-value">¥12,671.59</div><div class="metric-note">支出与退款净额</div></div>
+                <div class="metric"><div class="metric-label">剩余预算 <span class="tag red">超支</span></div><div class="metric-value">-¥771.59</div><div class="metric-note">预算 - 已确认支出</div></div>
+                <div class="metric"><div class="metric-label">待确认金额 <span class="tag amber">单独列</span></div><div class="metric-value">¥16,589.46</div><div class="metric-note">不进入正式预算消耗</div></div>
+              </div>
+              <div class="layout-detail" style="margin-top:12px;">
+                <div class="panel">
+                  <div class="panel-header"><div><div class="panel-title">按月趋势</div><div class="panel-subtitle">已确认收入、已确认支出、结余</div></div></div>
+                  <div class="chart">
+                    <div class="chart-caption">2026 年趋势</div>
+                    <svg viewBox="0 0 900 250" preserveAspectRatio="none">
+                      <polyline points="30,160 150,130 270,150 390,90 510,110 630,80 760,120 870,70" fill="none" stroke="#4a7cff" stroke-width="4"/>
+                      <polyline points="30,190 150,170 270,130 390,150 510,105 630,140 760,110 870,125" fill="none" stroke="#ff4b6e" stroke-width="4"/>
+                      <polyline points="30,120 150,100 270,160 390,95 510,150 630,105 760,145 870,98" fill="none" stroke="#1f9d73" stroke-width="4"/>
+                    </svg>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-header"><div><div class="panel-title">近期待处理</div><div class="panel-subtitle">红黄绿灯，本地提示</div></div></div>
+                  <div class="row-list">
+                    <div class="info-row selected"><div><div class="row-title">税务相关</div><div class="row-meta">预算进度 · 已达 137.4%</div></div><span class="tag red">红灯</span><span class="amount red">¥686.94</span></div>
+                    <div class="info-row"><div><div class="row-title">MiniMax 续费</div><div class="row-meta">会员续费 · 2026-05-03</div></div><span class="tag green">绿灯</span><span class="amount">9 天后</span></div>
+                    <div class="info-row"><div><div class="row-title">日常零花</div><div class="row-meta">预算进度 · 已达 119.2%</div></div><span class="tag red">红灯</span><span class="amount red">超支</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="dashboard-accounts">
+              <div class="panel">
+                <div class="panel-header"><div><div class="panel-title">账户余额概览</div><div class="panel-subtitle">示例余额，来源为最近快照 + 已确认流水净变化</div></div></div>
+                <div class="grid-3">
+                  <div class="metric"><div class="metric-label">银行卡 <span class="tag green">正常</span></div><div class="metric-value">¥18,240.80</div><div class="metric-note">生活主账户</div></div>
+                  <div class="metric"><div class="metric-label">支付宝 <span class="tag green">正常</span></div><div class="metric-value">¥2,106.33</div><div class="metric-note">线上消费</div></div>
+                  <div class="metric"><div class="metric-label">API 余额 <span class="tag amber">需回查</span></div><div class="metric-value">¥300.00</div><div class="metric-note">手动维护</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="dashboard-reminders">
+              <div class="panel">
+                <div class="panel-header"><div><div class="panel-title">近期待处理队列</div><div class="panel-subtitle">可以作为充值续费页入口</div></div><button class="button secondary">查看全部提醒</button></div>
+                <div class="row-list">
+                  <div class="info-row"><div><div class="row-title">房租</div><div class="row-meta">固定支出 · 每月 5 日</div></div><span class="tag red">红灯</span><span class="amount">¥2,500.00</span></div>
+                  <div class="info-row"><div><div class="row-title">话费充值</div><div class="row-meta">账户余额 · 低于阈值</div></div><span class="tag amber">黄灯</span><span class="amount">¥89.81</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="dashboard-transactions">
+              <div class="panel">
+                <div class="panel-header"><div><div class="panel-title">最近流水</div><div class="panel-subtitle">收入、支出、转账、充值、退款</div></div></div>
+                <table class="table"><thead><tr><th>日期</th><th>类型</th><th>标签</th><th>备注</th><th>状态</th><th>金额</th></tr></thead><tbody>
+                  <tr><td>2026-04-23 13:20</td><td>支出</td><td>日常零花</td><td>打车</td><td><span class="tag green">已确认</span></td><td class="num">¥22.30</td></tr>
+                  <tr><td>2026-04-22 23:29</td><td>支出</td><td>日常零花</td><td>购物</td><td><span class="tag green">已确认</span></td><td class="num">¥19.11</td></tr>
+                  <tr><td>2026-04-15 10:25</td><td>收入</td><td>网店</td><td>待归属</td><td><span class="tag amber">待确认</span></td><td class="num">¥4,300.00</td></tr>
+                </tbody></table>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" data-page="accounts" data-title="私人账户" data-meta="范围：全部账户 · 示例余额">
+            <div class="tabs">
+              <button class="tab-button active" data-tab-target="accounts-list">账户总览</button>
+              <button class="tab-button" data-tab-target="accounts-detail">账户详情</button>
+              <button class="tab-button" data-tab-target="accounts-snapshots">余额快照</button>
+              <button class="tab-button" data-tab-target="accounts-purpose">用途状态</button>
+            </div>
+            <div class="tab-panel active" data-tab="accounts-list">
+              <div class="section-stack">
+                <div class="grid-4">
+                  <div class="metric"><div class="metric-label">资金账户 <span class="tag green">正常</span></div><div class="metric-value">4 个</div><div class="metric-note">银行卡、支付宝、微信、现金</div></div>
+                  <div class="metric"><div class="metric-label">充值账户 <span class="tag amber">需回查</span></div><div class="metric-value">2 个</div><div class="metric-note">API 余额、话费账户</div></div>
+                  <div class="metric"><div class="metric-label">会员账户 <span class="tag green">续费中</span></div><div class="metric-value">1 个</div><div class="metric-note">MiniMax 月度套餐</div></div>
+                  <div class="metric"><div class="metric-label">待确认快照 <span class="tag amber">单独列</span></div><div class="metric-value">2 笔</div><div class="metric-note">不直接覆盖账户余额</div></div>
+                </div>
+                <div class="layout-rail">
+                  <div class="panel"><div class="panel-header"><div><div class="panel-title">账户清单</div><div class="panel-subtitle">按用途和状态快速扫一遍</div></div><button class="button secondary">新增账户</button></div>
+                  <div class="row-list">
+                    <div class="info-row selected"><div><div class="row-title">招商银行卡</div><div class="row-meta">银行卡 · 生活主账户</div></div><span class="tag green">正常</span><span class="amount">¥18,240.80</span></div>
+                    <div class="info-row"><div><div class="row-title">支付宝</div><div class="row-meta">线上消费 · 已确认快照</div></div><span class="tag green">正常</span><span class="amount">¥2,106.33</span></div>
+                    <div class="info-row"><div><div class="row-title">微信钱包</div><div class="row-meta">小额支出 · 待回查</div></div><span class="tag amber">关注</span><span class="amount">¥860.12</span></div>
+                    <div class="info-row"><div><div class="row-title">API 余额</div><div class="row-meta">手动维护 · 低余额阈值</div></div><span class="tag amber">需回查</span><span class="amount">¥300.00</span></div>
+                    <div class="info-row"><div><div class="row-title">话费账户</div><div class="row-meta">通信 · 月度回查</div></div><span class="tag green">正常</span><span class="amount">¥89.81</span></div>
+                  </div>
+                  </div>
+                  <div class="panel"><div class="panel-header"><div><div class="panel-title">选中账户详情</div><div class="panel-subtitle">余额=最近已确认快照+之后已确认流水净变化</div></div></div>
+                    <div class="grid-3"><div class="metric"><div class="metric-label">当前余额</div><div class="metric-value">¥18,240.80</div><div class="metric-note">示例余额</div></div><div class="metric"><div class="metric-label">用途</div><div class="metric-value" style="font-size:20px;">生活主账户</div><div class="metric-note">工资、日常支出</div></div><div class="metric"><div class="metric-label">最近快照</div><div class="metric-value" style="font-size:20px;">2026-04-23</div><div class="metric-note">手动对账</div></div></div>
+                    <div class="status-strip" style="margin-top:12px;"><span class="tag green">已确认</span><span>来源：手动快照</span><span>状态：正常</span><span>口径：不含待确认流水</span></div>
+                    <table class="table" style="margin-top:12px;"><thead><tr><th>字段</th><th>内容</th><th>口径</th></tr></thead><tbody><tr><td>账户用途</td><td>生活主账户</td><td>工资、日常消费、固定支出</td></tr><tr><td>余额来源</td><td>最近快照 + 已确认流水</td><td>待确认不计入</td></tr><tr><td>提醒规则</td><td>无低余额提醒</td><td>可在充值续费页补充</td></tr></tbody></table>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="accounts-detail">
+              <div class="wide-split">
+                <div class="panel"><div class="panel-header"><div><div class="panel-title">账户编辑</div><div class="panel-subtitle">账户名、用途、状态都使用清晰中文</div></div></div>
+                  <div class="form-grid"><div class="field"><div class="label">账户名称</div><input class="input" value="招商银行卡"></div><div class="field"><div class="label">账户类型</div><select class="select"><option>银行卡</option><option>支付宝</option><option>微信钱包</option><option>API 余额</option><option>话费</option><option>会员账户</option></select></div><div class="field"><div class="label">用途</div><input class="input" value="生活主账户"></div><div class="field"><div class="label">状态</div><select class="select"><option>正常</option><option>需回查</option><option>停用</option></select></div><div class="field"><div class="label">低余额阈值</div><input class="input" value="待确认"></div><div class="field"><div class="label">数据来源</div><input class="input" value="手动维护"></div></div>
+                  <div style="margin-top:12px;"><button class="button">保存账户</button> <button class="button secondary">录入余额快照</button></div>
+                </div>
+                <div class="panel"><div class="panel-title">账户备注</div><div class="note-sheet">用途：生活主账户。
+统计口径：只展示已确认快照和已确认流水。
+待确认说明：任何账单导入或 OCR 草稿进入账户前，都先进入待确认，不直接改变余额。</div></div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="accounts-snapshots">
+              <div class="panel"><div class="panel-header"><div><div class="panel-title">余额快照</div><div class="panel-subtitle">快照用于定期校准余额，不替代流水</div></div><button class="button secondary">新增快照</button></div>
+                <div class="table-wrap"><table class="table"><thead><tr><th>快照时间</th><th>账户</th><th>快照金额</th><th>确认状态</th><th>来源</th><th>备注</th></tr></thead><tbody><tr><td>2026-04-23 21:00</td><td>招商银行卡</td><td class="num">¥18,240.80</td><td><span class="tag green">已确认</span></td><td>手动对账</td><td>月末前校准</td></tr><tr><td>2026-04-20 22:30</td><td>API 余额</td><td class="num">¥300.00</td><td><span class="tag amber">待回查</span></td><td>手动维护</td><td>需要和平台余额核对</td></tr><tr><td>2026-04-18 10:00</td><td>话费账户</td><td class="num">¥89.81</td><td><span class="tag green">已确认</span></td><td>手动回查</td><td>用于低余额提醒</td></tr></tbody></table></div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="accounts-purpose">
+              <div class="grid-3">
+                <div class="panel"><div class="panel-title">生活主账户</div><div class="panel-subtitle">工资、日常、固定支出</div><div class="status-strip" style="margin-top:12px;"><span class="tag green">3 个账户</span><span>银行卡</span><span>支付宝</span><span>微信钱包</span></div></div>
+                <div class="panel"><div class="panel-title">充值与回查账户</div><div class="panel-subtitle">API 余额、话费、会员</div><div class="status-strip" style="margin-top:12px;"><span class="tag amber">2 个需关注</span><span>低余额</span><span>续费日期</span></div></div>
+                <div class="panel"><div class="panel-title">停用或归档</div><div class="panel-subtitle">不参与日常看板，但保留历史</div><div class="status-strip" style="margin-top:12px;"><span class="tag gray">0 个</span><span>后续可归档</span></div></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" data-page="transactions" data-title="流水记录" data-meta="范围：2026-04 · 已确认与待确认分开">
+            <div class="tabs">
+              <button class="tab-button active" data-tab-target="txn-ledger">流水台账</button>
+              <button class="tab-button" data-tab-target="txn-pending">待确认</button>
+              <button class="tab-button" data-tab-target="txn-tags">按标签</button>
+              <button class="tab-button" data-tab-target="txn-detail">单笔详情</button>
+            </div>
+            <div class="tab-panel active" data-tab="txn-ledger">
+              <div class="panel"><div class="panel-header"><div><div class="panel-title">流水台账</div><div class="panel-subtitle">确认状态会影响看板，待确认不进入正式统计</div></div><button class="button secondary">批量确认</button></div><div class="filterbar"><select class="select"><option>2026-04</option></select><select class="select"><option>全部类型</option></select><select class="select"><option>全部标签</option></select><select class="select"><option>全部状态</option></select><input class="input" placeholder="搜索备注 / 来源"></div>
+              <div class="table-wrap"><table class="table"><thead><tr><th>日期</th><th>类型</th><th>标签</th><th>备注</th><th>账户</th><th>来源</th><th>状态</th><th>金额</th></tr></thead><tbody><tr><td>2026-04-23 13:20</td><td>支出</td><td>日常零花</td><td>滴滴出行</td><td>日常账本</td><td>Excel</td><td><span class="tag green">已确认</span></td><td class="num">¥22.30</td></tr><tr><td>2026-04-22 21:31</td><td>支出</td><td>日常零花</td><td>便利店</td><td>日常账本</td><td>Excel</td><td><span class="tag green">已确认</span></td><td class="num">¥44.47</td></tr><tr><td>2026-04-20 00:37</td><td>支出</td><td>出行交通</td><td>打车</td><td>日常账本</td><td>Excel</td><td><span class="tag green">已确认</span></td><td class="num">¥30.40</td></tr><tr><td>2026-04-15 10:25</td><td>收入</td><td>网店</td><td>待归属</td><td>-</td><td>导入草稿</td><td><span class="tag amber">待确认</span></td><td class="num">¥4,300.00</td></tr></tbody></table></div></div>
+            </div>
+            <div class="tab-panel" data-tab="txn-pending">
+              <div class="wide-split"><div class="panel"><div class="panel-header"><div><div class="panel-title">待确认队列</div><div class="panel-subtitle">先判断归属，再决定是否进入正式统计</div></div></div><div class="row-list"><div class="info-row selected"><div><div class="row-title">网店收入待确认</div><div class="row-meta">2026-04-15 · 收入 · 来源待归属</div></div><span class="tag amber">待确认</span><span class="amount">¥4,300.00</span></div><div class="info-row"><div><div class="row-title">店铺保证金</div><div class="row-meta">2026-04-15 · 需要回查</div></div><span class="tag amber">待确认</span><span class="amount">¥2,499.97</span></div><div class="info-row"><div><div class="row-title">退款归属待确认</div><div class="row-meta">退款需要冲减哪个标签</div></div><span class="tag amber">待确认</span><span class="amount">¥188.00</span></div></div></div><div class="panel"><div class="panel-title">确认动作</div><div class="form-grid" style="grid-template-columns:1fr; margin-top:12px;"><div class="field"><div class="label">归属类型</div><select class="select"><option>收入</option><option>支出</option><option>退款</option></select></div><div class="field"><div class="label">标签</div><input class="input" value="网店"></div><div class="field"><div class="label">备注</div><input class="input" value="待确认来源"></div></div><div style="margin-top:12px;"><button class="button">确认入账</button> <button class="button secondary">保持待确认</button></div></div></div>
+            </div>
+            <div class="tab-panel" data-tab="txn-tags">
+              <div class="section-stack"><div class="grid-4"><div class="metric"><div class="metric-label">日常零花</div><div class="metric-value">¥3,543.48</div><div class="metric-note">已确认支出</div></div><div class="metric"><div class="metric-label">个人成长投资</div><div class="metric-value">¥2,585.13</div><div class="metric-note">课程/工具</div></div><div class="metric"><div class="metric-label">房租</div><div class="metric-value">¥2,500.00</div><div class="metric-note">固定支出</div></div><div class="metric"><div class="metric-label">税务相关</div><div class="metric-value">¥686.94</div><div class="metric-note">已超预算</div></div></div><div class="panel"><div class="panel-title">标签消费排行</div><div class="section-stack" style="margin-top:12px;"><div class="mini-card"><div class="mini-card-title">日常零花 · 119.2%</div><div class="progress"><span class="red" style="width:100%"></span></div><div class="mini-card-meta">计划 ¥3,000.00，已确认 ¥3,543.48</div></div><div class="mini-card"><div class="mini-card-title">个人成长投资 · 258.5%</div><div class="progress"><span class="red" style="width:100%"></span></div><div class="mini-card-meta">计划 ¥1,000.00，已确认 ¥2,585.13</div></div><div class="mini-card"><div class="mini-card-title">话费 · 29.9%</div><div class="progress"><span class="green" style="width:30%"></span></div><div class="mini-card-meta">计划 ¥300.00，已确认 ¥89.81</div></div></div></div></div>
+            </div>
+            <div class="tab-panel" data-tab="txn-detail">
+              <div class="wide-split"><div class="panel"><div class="panel-header"><div><div class="panel-title">单笔流水详情</div><div class="panel-subtitle">所有影响统计的字段都要能追溯来源</div></div><span class="tag green">已确认</span></div><div class="form-grid"><div class="field"><div class="label">发生时间</div><input class="input" value="2026-04-23 13:20"></div><div class="field"><div class="label">类型</div><select class="select"><option>支出</option></select></div><div class="field"><div class="label">标签</div><input class="input" value="日常零花"></div><div class="field"><div class="label">金额</div><input class="input" value="22.30"></div><div class="field"><div class="label">账户</div><input class="input" value="日常账本"></div><div class="field"><div class="label">来源</div><input class="input" value="Excel 导入草稿"></div></div><div style="margin-top:12px;"><button class="button">保存流水</button> <button class="button danger">删除流水</button></div></div><div class="panel"><div class="panel-title">备注与来源</div><div class="note-sheet">来源：Excel 导入草稿
+备注：滴滴出行
+口径：已确认支出，计入日常零花标签。
+更新时间：2026-04-23 13:20</div></div></div>
+            </div>
+          </section>
+
+          <section class="page" data-page="budgets" data-title="预算计划" data-meta="范围：2026-04 · 预算项自动合计">
+            <div class="tabs">
+              <button class="tab-button active" data-tab-target="budget-workbench">预算工作台</button>
+              <button class="tab-button" data-tab-target="budget-year">全年十二月</button>
+              <button class="tab-button" data-tab-target="budget-income">预计收入项</button>
+              <button class="tab-button" data-tab-target="budget-expense">预计支出项</button>
+              <button class="tab-button" data-tab-target="budget-effective">生效范围</button>
+            </div>
+            <div class="tab-panel active" data-tab="budget-workbench">
+              <div class="grid-4"><div class="metric"><div class="metric-label">计划收入 <span class="tag green">收入计划</span></div><div class="metric-value">¥15,741.00</div><div class="metric-note">实际 ¥13,731.22</div></div><div class="metric"><div class="metric-label">计划支出 <span class="tag gray">自动合计</span></div><div class="metric-value">¥11,900.00</div><div class="metric-note">已确认 ¥12,671.59</div></div><div class="metric"><div class="metric-label">计划结余 <span class="tag red">收入-支出</span></div><div class="metric-value">¥3,841.00</div><div class="metric-note">实际 ¥1,059.63</div></div><div class="metric"><div class="metric-label">待确认 <span class="tag amber">单独列</span></div><div class="metric-value">¥16,589.46</div><div class="metric-note">不进预算消耗</div></div></div>
+              <div class="layout-detail" style="margin-top:12px;"><div class="panel"><div class="panel-title">当月预算项对比</div><table class="table" style="margin-top:12px;"><thead><tr><th>预算项</th><th>类型</th><th>标签</th><th>生效月份</th><th>计划</th><th>已确认</th><th>差额</th><th>状态</th></tr></thead><tbody><tr><td>房租</td><td>固定支出</td><td>房租</td><td>2026-04 起</td><td class="num">¥2,500.00</td><td class="num">¥2,500.00</td><td class="num">¥0.00</td><td><span class="tag green">已达成</span></td></tr><tr><td>日常零花</td><td>标签预算</td><td>日常零花</td><td>2026-04</td><td class="num">¥3,000.00</td><td class="num">¥3,543.48</td><td class="num">+¥543.48</td><td><span class="tag red">超支</span></td></tr></tbody></table></div><div class="panel"><div class="panel-title">快速编辑</div><div class="form-grid" style="grid-template-columns:1fr; margin-top:12px;"><div class="field"><div class="label">生效方式</div><select class="select"><option>从当前月起</option><option>仅当前月</option><option>指定月份范围</option></select></div><div class="field"><div class="label">开始月份</div><input class="input" value="2026-04"></div><div class="field"><div class="label">结束月份</div><input class="input" value=""></div></div></div></div>
+            </div>
+            <div class="tab-panel" data-tab="budget-year">
+              <div class="year-board">
+                <div class="grid-4">
+                  <div class="metric"><div class="metric-label">全年计划收入 <span class="tag green">预期</span></div><div class="metric-value">¥187,920</div><div class="metric-note">十二个月收入预算合计</div></div>
+                  <div class="metric"><div class="metric-label">全年计划支出 <span class="tag gray">预期</span></div><div class="metric-value">¥142,800</div><div class="metric-note">固定支出 + 标签预算 + 储蓄计划</div></div>
+                  <div class="metric"><div class="metric-label">全年计划结余 <span class="tag blue">收入-支出</span></div><div class="metric-value">¥45,120</div><div class="metric-note">只看预算，不含待确认</div></div>
+                  <div class="metric"><div class="metric-label">当前待确认 <span class="tag amber">单独列</span></div><div class="metric-value">¥41,317</div><div class="metric-note">不污染年度正式统计</div></div>
+                </div>
+                <div class="status-strip"><span class="tag blue">年度视图</span><span>横向十二个月，每个月拆成预期/实际。</span><span>浅蓝为重点观察月，浅粉为压力月。</span><span>示例数据，仅用于 UI 结构。</span></div>
+                <div class="year-scroll" aria-label="2026 年全年预算与实际大表">
+                  <table class="year-table">
+                    <thead>
+                      <tr>
+                        <th class="year-title-cell">关键节点</th>
+                        <th class="year-title-cell" colspan="6">第一季度 · 财务打正</th>
+                        <th class="year-title-cell" colspan="6">第二季度 · AI 布局</th>
+                        <th class="year-title-cell" colspan="6">第三季度 · 身材管理</th>
+                        <th class="year-title-cell" colspan="6">第四季度 · 年末复盘</th>
+                      </tr>
+                      <tr>
+                        <th class="quarter-cell">月份</th>
+                        <th class="month-cell blue" colspan="2">一月</th>
+                        <th class="month-cell pink" colspan="2">二月</th>
+                        <th class="month-cell blue" colspan="2">三月</th>
+                        <th class="month-cell pink" colspan="2">四月</th>
+                        <th class="month-cell blue" colspan="2">五月</th>
+                        <th class="month-cell pink" colspan="2">六月</th>
+                        <th class="month-cell blue" colspan="2">七月</th>
+                        <th class="month-cell pink" colspan="2">八月</th>
+                        <th class="month-cell blue" colspan="2">九月</th>
+                        <th class="month-cell pink" colspan="2">十月</th>
+                        <th class="month-cell blue" colspan="2">十一月</th>
+                        <th class="month-cell pink" colspan="2">十二月</th>
+                      </tr>
+                      <tr>
+                        <th class="subhead">项目</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                        <th class="subhead">预期</th><th class="subhead">实际</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr class="row-group"><th>收入</th><td colspan="24">收入预算与已确认收入</td></tr>
+                      <tr class="row-subtotal"><th>收入合计</th><td class="blue">16,821</td><td class="blue">17,074</td><td class="pink">25,071</td><td class="pink">25,672</td><td class="blue">17,013</td><td class="blue">22,976</td><td class="pink">15,741</td><td class="pink">13,731</td><td class="blue">16,216</td><td class="blue">0</td><td class="pink">14,688</td><td class="pink">0</td><td class="blue">14,699</td><td class="blue">0</td><td class="pink">14,492</td><td class="pink">0</td><td class="blue">14,683</td><td class="blue">0</td><td class="pink">14,642</td><td class="pink">0</td><td class="blue">14,647</td><td class="blue">0</td><td class="pink">14,625</td><td class="pink">0</td></tr>
+                      <tr><th>工资</th><td class="blue">11,821</td><td class="blue">10,604</td><td class="pink">11,785</td><td class="pink">11,785</td><td class="blue">11,713</td><td class="blue">11,785</td><td class="pink">11,642</td><td class="pink">11,632</td><td class="blue">11,815</td><td class="blue">0</td><td class="pink">11,787</td><td class="pink">0</td><td class="blue">11,799</td><td class="blue">0</td><td class="pink">11,592</td><td class="pink">0</td><td class="blue">11,753</td><td class="blue">0</td><td class="pink">11,742</td><td class="pink">0</td><td class="blue">11,747</td><td class="blue">0</td><td class="pink">11,725</td><td class="pink">0</td></tr>
+                      <tr><th>房租补贴</th><td class="blue">1,800</td><td class="blue">1,800</td><td class="pink">1,800</td><td class="pink">1,800</td><td class="blue">1,800</td><td class="blue">1,800</td><td class="pink">1,800</td><td class="pink">1,800</td><td class="blue">1,800</td><td class="blue">0</td><td class="pink">1,800</td><td class="pink">0</td><td class="blue">1,800</td><td class="blue">0</td><td class="pink">1,800</td><td class="pink">0</td><td class="blue">1,800</td><td class="blue">0</td><td class="pink">1,800</td><td class="pink">0</td><td class="blue">1,800</td><td class="blue">0</td><td class="pink">1,800</td><td class="pink">0</td></tr>
+                      <tr><th>其他收入</th><td class="blue">3,200</td><td class="blue">4,670</td><td class="pink">11,486</td><td class="pink">12,087</td><td class="blue">3,500</td><td class="blue">9,391</td><td class="pink">2,299</td><td class="pink">299</td><td class="blue">2,601</td><td class="blue">0</td><td class="pink">1,101</td><td class="pink">0</td><td class="blue">1,100</td><td class="blue">0</td><td class="pink">1,100</td><td class="pink">0</td><td class="blue">1,130</td><td class="blue">0</td><td class="pink">1,100</td><td class="pink">0</td><td class="blue">1,100</td><td class="blue">0</td><td class="pink">1,100</td><td class="pink">0</td></tr>
+                      <tr class="row-group"><th>支出</th><td colspan="24">支出预算、固定支出与储蓄计划</td></tr>
+                      <tr class="row-subtotal"><th>支出合计</th><td class="blue">16,900</td><td class="blue">17,074</td><td class="pink">11,200</td><td class="pink">10,398</td><td class="blue">59,218</td><td class="blue">60,678</td><td class="pink">11,900</td><td class="pink">12,672</td><td class="blue">13,777</td><td class="blue">0</td><td class="pink">11,777</td><td class="pink">0</td><td class="blue">11,777</td><td class="blue">0</td><td class="pink">11,777</td><td class="pink">0</td><td class="blue">11,777</td><td class="blue">0</td><td class="pink">11,777</td><td class="pink">0</td><td class="blue">11,777</td><td class="blue">0</td><td class="pink">11,777</td><td class="pink">0</td></tr>
+                      <tr><th>房租</th><td class="blue">2,500</td><td class="blue">2,500</td><td class="pink">2,500</td><td class="pink">2,500</td><td class="blue">2,500</td><td class="blue">2,500</td><td class="pink">2,500</td><td class="pink">2,500</td><td class="blue">2,500</td><td class="blue">0</td><td class="pink">2,500</td><td class="pink">0</td><td class="blue">2,500</td><td class="blue">0</td><td class="pink">2,500</td><td class="pink">0</td><td class="blue">2,500</td><td class="blue">0</td><td class="pink">2,500</td><td class="pink">0</td><td class="blue">2,500</td><td class="blue">0</td><td class="pink">2,500</td><td class="pink">0</td></tr>
+                      <tr><th>车贷提前储蓄</th><td class="blue">300</td><td class="blue">300</td><td class="pink">300</td><td class="pink">300</td><td class="blue">300</td><td class="blue">300</td><td class="pink">300</td><td class="pink">300</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td></tr>
+                      <tr><th>日常零花</th><td class="blue">3,000</td><td class="blue">3,492</td><td class="pink">3,000</td><td class="pink">3,001</td><td class="blue">3,000</td><td class="blue">5,040</td><td class="pink">3,000</td><td class="pink">3,543</td><td class="blue">3,000</td><td class="blue">0</td><td class="pink">3,000</td><td class="pink">0</td><td class="blue">3,000</td><td class="blue">0</td><td class="pink">3,000</td><td class="pink">0</td><td class="blue">3,000</td><td class="blue">0</td><td class="pink">3,000</td><td class="pink">0</td><td class="blue">3,000</td><td class="blue">0</td><td class="pink">3,000</td><td class="pink">0</td></tr>
+                      <tr><th>个人成长投资</th><td class="blue">0</td><td class="blue">0</td><td class="pink">500</td><td class="pink">198</td><td class="blue">1,000</td><td class="blue">1,821</td><td class="pink">1,000</td><td class="pink">2,585</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td></tr>
+                      <tr><th>战略储蓄</th><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td><td class="blue">10,000</td><td class="blue">10,000</td><td class="pink">1,000</td><td class="pink">1,000</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td></tr>
+                      <tr><th>税务相关</th><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td><td class="blue">2,000</td><td class="blue">2,777</td><td class="pink">500</td><td class="pink">687</td><td class="blue">500</td><td class="blue">0</td><td class="pink">500</td><td class="pink">0</td><td class="blue">500</td><td class="blue">0</td><td class="pink">500</td><td class="pink">0</td><td class="blue">500</td><td class="blue">0</td><td class="pink">500</td><td class="pink">0</td><td class="blue">500</td><td class="blue">0</td><td class="pink">500</td><td class="pink">0</td></tr>
+                      <tr><th>话费</th><td class="blue">300</td><td class="blue">80</td><td class="pink">300</td><td class="pink">67</td><td class="blue">300</td><td class="blue">61</td><td class="pink">300</td><td class="pink">90</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td><td class="blue">300</td><td class="blue">0</td><td class="pink">300</td><td class="pink">0</td></tr>
+                      <tr><th>约会</th><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">625</td><td class="blue">1,000</td><td class="blue">695</td><td class="pink">1,000</td><td class="pink">361</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td><td class="blue">1,000</td><td class="blue">0</td><td class="pink">1,000</td><td class="pink">0</td></tr>
+                      <tr class="row-group"><th>结余</th><td colspan="24">收入 - 支出；待确认不混入正式口径</td></tr>
+                      <tr class="row-subtotal"><th>月度结余</th><td class="blue negative">-279</td><td class="blue negative">-997</td><td class="pink positive">13,871</td><td class="pink positive">15,283</td><td class="blue negative">-42,206</td><td class="blue negative">-37,702</td><td class="pink positive">3,841</td><td class="pink positive">1,060</td><td class="blue positive">2,439</td><td class="blue">0</td><td class="pink positive">2,911</td><td class="pink">0</td><td class="blue positive">2,922</td><td class="blue">0</td><td class="pink positive">2,715</td><td class="pink">0</td><td class="blue positive">2,906</td><td class="blue">0</td><td class="pink positive">2,864</td><td class="pink">0</td><td class="blue positive">2,870</td><td class="blue">0</td><td class="pink positive">2,848</td><td class="pink">0</td></tr>
+                      <tr><th>待确认</th><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td><td class="blue">0</td><td class="blue">41,317</td><td class="pink">0</td><td class="pink">16,589</td><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td><td class="blue">0</td><td class="blue">0</td><td class="pink">0</td><td class="pink">0</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="budget-income"><div class="panel"><table class="table"><thead><tr><th>收入项</th><th>标签</th><th>生效月份</th><th>计划</th><th>实际</th><th>待确认</th><th>状态</th></tr></thead><tbody><tr><td>工资</td><td>工资</td><td>2026-04</td><td class="num">¥11,642.00</td><td class="num">¥11,632.22</td><td class="num">¥0.00</td><td><span class="tag green">接近</span></td></tr><tr><td>其他收入</td><td>其他收入</td><td>2026-04</td><td class="num">¥100.00</td><td class="num">¥100.00</td><td class="num">¥0.00</td><td><span class="tag green">已达成</span></td></tr></tbody></table></div></div>
+            <div class="tab-panel" data-tab="budget-expense"><div class="panel"><table class="table"><thead><tr><th>支出项</th><th>类型</th><th>标签</th><th>生效月份</th><th>计划</th><th>实际</th><th>进度</th><th>状态</th></tr></thead><tbody><tr><td>个人成长投资</td><td>标签预算</td><td>个人成长投资</td><td>2026-04 至 2026-06</td><td class="num">¥1,000.00</td><td class="num">¥2,585.13</td><td class="num">258.5%</td><td><span class="tag red">超支</span></td></tr><tr><td>话费</td><td>固定支出</td><td>话费</td><td>2026-04 起</td><td class="num">¥300.00</td><td class="num">¥89.81</td><td class="num">29.9%</td><td><span class="tag green">进行中</span></td></tr></tbody></table></div></div>
+            <div class="tab-panel" data-tab="budget-effective"><div class="panel"><div class="row-list"><div class="info-row selected"><div><div class="row-title">仅当前月</div><div class="row-meta">适合活动、一次性购买、临时预算</div></div><span class="tag blue">2026-04</span><span class="amount">单月</span></div><div class="info-row"><div><div class="row-title">从当前月起</div><div class="row-meta">适合房租、话费、会员、长期储蓄</div></div><span class="tag green">2026-04 起</span><span class="amount">长期</span></div><div class="info-row"><div><div class="row-title">指定月份范围</div><div class="row-meta">适合课程、活动、阶段性计划</div></div><span class="tag amber">2026-04 至 2026-06</span><span class="amount">阶段</span></div></div></div></div>
+          </section>
+
+          <section class="page" data-page="reminders" data-title="充值续费" data-meta="范围：2026-04 · 红黄绿灯本地提示">
+            <div class="tabs">
+              <button class="tab-button active" data-tab-target="reminder-center">提醒中心</button>
+              <button class="tab-button" data-tab-target="reminder-lights">红黄绿视图</button>
+              <button class="tab-button" data-tab-target="reminder-subscriptions">订阅服务</button>
+              <button class="tab-button" data-tab-target="reminder-notes">备注与来源</button>
+            </div>
+            <div class="tab-panel active" data-tab="reminder-center">
+              <div class="grid-4"><div class="metric"><div class="metric-label">全部提醒 <span class="tag gray">本地</span></div><div class="metric-value">10 项</div><div class="metric-note">启用 2 项，停用 8 项</div></div><div class="metric"><div class="metric-label">红灯 <span class="tag red">急</span></div><div class="metric-value">8 项</div><div class="metric-note">已超支或已到期</div></div><div class="metric"><div class="metric-label">黄灯 <span class="tag amber">80%</span></div><div class="metric-value">1 项</div><div class="metric-note">达到 80% 或 7 天内</div></div><div class="metric"><div class="metric-label">绿灯 <span class="tag green">稳</span></div><div class="metric-value">1 项</div><div class="metric-note">仍在正常区间</div></div></div>
+              <div class="reminder-workspace">
+                <div class="panel">
+                  <div class="panel-header">
+                    <div><div class="panel-title">提醒清单</div><div class="panel-subtitle">按预计开支/订阅查看，红黄绿灯只做本地提示</div></div>
+                    <button class="button secondary">新建提醒</button>
+                  </div>
+                  <div class="filterbar"><button class="button secondary">全部</button><button class="button secondary">红灯</button><button class="button secondary">黄灯</button><button class="button secondary">绿灯</button><button class="button secondary">启用</button></div>
+                  <div class="reminder-card-list">
+                    <div class="reminder-card selected red">
+                      <div class="reminder-card-head"><div><div class="reminder-card-title">税务相关</div><div class="reminder-card-meta">预算进度提醒 · 当前已达 137.4%</div></div><span class="tag red">红灯</span></div>
+                      <div class="reminder-card-foot"><span class="tag green">启用</span><span class="amount red">超出计划</span></div>
+                    </div>
+                    <div class="reminder-card red">
+                      <div class="reminder-card-head"><div><div class="reminder-card-title">房租</div><div class="reminder-card-meta">固定支出 · 每月 5 日 · 已达 100.0%</div></div><span class="tag red">红灯</span></div>
+                      <div class="reminder-card-foot"><span class="tag gray">停用</span><span class="amount">¥2,500.00</span></div>
+                    </div>
+                    <div class="reminder-card green">
+                      <div class="reminder-card-head"><div><div class="reminder-card-title">MiniMax Max-极速版月度套餐</div><div class="reminder-card-meta">会员续费 · 到期 2026-05-03</div></div><span class="tag green">绿灯</span></div>
+                      <div class="reminder-card-foot"><span class="tag green">启用</span><span class="amount green">9 天后</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="detail-stack">
+                  <div class="panel">
+                    <div class="panel-header">
+                      <div><div class="panel-title">税务相关</div><div class="panel-subtitle">阈值提醒 · 预算进度 · 当前 ¥686.94，已达 137.4%</div></div>
+                      <span class="tag red">红灯</span>
+                    </div>
+                    <div class="form-grid">
+                      <div class="field"><div class="label">提醒标题</div><input class="input" value="税务相关 预算超支提醒"></div>
+                      <div class="field"><div class="label">到期日期</div><input class="input" value="2026-05-03"></div>
+                      <div class="field"><div class="label">提醒类型</div><select class="select"><option>阈值提醒</option></select></div>
+                      <div class="field"><div class="label">当前值</div><input class="input" value="686.94"></div>
+                    </div>
+                    <div style="margin-top:12px;"><button class="button">保存提醒</button> <button class="button danger">删除提醒</button></div>
+                  </div>
+                  <div class="panel">
+                    <div class="panel-header"><div><div class="panel-title">备注与同步来源</div><div class="panel-subtitle">长备注独立阅读，不再挤在表单中间</div></div></div>
+                    <div class="note-sheet">同步来源：Obsidian 私帐自动同步
+同步月份：2026-04
+预算项：税务相关
+预算：500.00
+实际：686.94
+进度：137.39%
+来源文件：个人志/财务/私帐/预期与实际/2026-04-预期与实际.md
+更新时间：2026-04-24T10:44:52</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab="reminder-lights"><div class="panel"><div class="grid-3"><div class="metric"><div class="metric-label">红灯清单</div><div class="metric-value">8 项</div><div class="metric-note">先处理超支、到期、低余额</div></div><div class="metric"><div class="metric-label">黄灯清单</div><div class="metric-value">1 项</div><div class="metric-note">观察，必要时调整预算</div></div><div class="metric"><div class="metric-label">绿灯清单</div><div class="metric-value">1 项</div><div class="metric-note">不需要动作</div></div></div></div></div>
+            <div class="tab-panel" data-tab="reminder-subscriptions"><div class="panel"><div class="row-list"><div class="info-row"><div><div class="row-title">MiniMax Max-极速版月度套餐</div><div class="row-meta">会员续费 · 2026-05-03</div></div><span class="tag green">绿灯</span><span class="amount">5 月 3 日</span></div><div class="info-row"><div><div class="row-title">云服务订阅</div><div class="row-meta">后续接入</div></div><span class="tag gray">待确认</span><span class="amount">-</span></div></div></div></div>
+            <div class="tab-panel" data-tab="reminder-notes"><div class="panel"><div class="panel-title">备注与来源全文</div><textarea class="textarea">这里专门用于查看 OCR、Obsidian、手动录入带来的完整备注。长文本不再塞在小输入框里。</textarea></div></div>
+          </section>
+
+          <section class="page" data-page="imports" data-title="数据导入" data-meta="范围：草稿导入 · 后续接入">
+            <div class="tabs"><button class="tab-button active" data-tab-target="import-entry">导入入口</button><button class="tab-button" data-tab-target="import-ocr">OCR 草稿</button><button class="tab-button" data-tab-target="import-obsidian">Obsidian</button><button class="tab-button" data-tab-target="import-history">导入历史</button></div>
+            <div class="tab-panel active" data-tab="import-entry"><div class="grid-3"><div class="panel"><div class="panel-title">Excel / CSV</div><div class="panel-subtitle">账单文件结构化导入</div><div class="empty-state">拖入文件后生成待确认草稿</div></div><div class="panel"><div class="panel-title">截图 / OCR</div><div class="panel-subtitle">MiniMax OCR 识别账单截图</div><div class="empty-state">截图识别后先进入待确认</div></div><div class="panel"><div class="panel-title">Obsidian 私帐</div><div class="panel-subtitle">同步日报和月度预算</div><div class="empty-state">按路径同步，不覆盖手动确认</div></div></div></div>
+            <div class="tab-panel" data-tab="import-ocr"><div class="panel"><table class="table"><thead><tr><th>草稿</th><th>类型</th><th>识别状态</th><th>处理动作</th></tr></thead><tbody><tr><td>账单截图 04-23</td><td>流水</td><td><span class="tag amber">待确认</span></td><td>确认 / 忽略</td></tr></tbody></table></div></div>
+            <div class="tab-panel" data-tab="import-obsidian"><div class="panel"><div class="row-list"><div class="info-row"><div><div class="row-title">私帐日报目录</div><div class="row-meta">个人志/财务/私帐/日记</div></div><span class="tag green">已配置</span><span class="amount">同步</span></div><div class="info-row"><div><div class="row-title">月度预期与实际</div><div class="row-meta">预期与实际/*.md</div></div><span class="tag green">已配置</span><span class="amount">同步</span></div></div></div></div>
+            <div class="tab-panel" data-tab="import-history"><div class="panel"><table class="table"><thead><tr><th>时间</th><th>来源</th><th>新增流水</th><th>提醒</th><th>状态</th></tr></thead><tbody><tr><td>2026-04-24 10:44</td><td>Obsidian</td><td>示例</td><td>示例</td><td><span class="tag green">完成</span></td></tr></tbody></table></div></div>
+          </section>
+
+          <section class="page" data-page="settings" data-title="设置" data-meta="范围：本地数据与安全出口">
+            <div class="tabs"><button class="tab-button active" data-tab-target="settings-data">数据安全</button><button class="tab-button" data-tab-target="settings-minimax">MiniMax OCR</button><button class="tab-button" data-tab-target="settings-paths">路径</button><button class="tab-button" data-tab-target="settings-export">导出备份</button></div>
+            <div class="tab-panel active" data-tab="settings-data"><div class="panel"><div class="grid-3"><div class="metric"><div class="metric-label">数据库</div><div class="metric-value" style="font-size:18px;">private-ledger.db</div><div class="metric-note">本地 SQLite</div></div><div class="metric"><div class="metric-label">schema</div><div class="metric-value">3</div><div class="metric-note">预算生效范围</div></div><div class="metric"><div class="metric-label">备份</div><div class="metric-value" style="font-size:18px;">手动备份</div><div class="metric-note">写入前建议备份</div></div></div></div></div>
+            <div class="tab-panel" data-tab="settings-minimax"><div class="panel"><div class="form-grid"><div class="field"><div class="label">模型</div><input class="input" value="MiniMax-M2.7"></div><div class="field"><div class="label">OCR MCP</div><select class="select"><option>已配置</option></select></div><div class="field"><div class="label">API Key</div><input class="input" value="已保存在本机钥匙串"></div></div></div></div>
+            <div class="tab-panel" data-tab="settings-paths"><div class="panel"><div class="row-list"><div class="info-row"><div><div class="row-title">数据库路径</div><div class="row-meta">~/Library/Application Support/草莓私帐管理系统/private-ledger.db</div></div><span class="tag blue">本地</span><span></span></div><div class="info-row"><div><div class="row-title">Obsidian 路径</div><div class="row-meta">项目管理/草莓私帐管理系统--个人</div></div><span class="tag green">已配置</span><span></span></div></div></div></div>
+            <div class="tab-panel" data-tab="settings-export"><div class="panel"><div class="row-list"><div class="info-row"><div><div class="row-title">导出 JSON</div><div class="row-meta">包含 schema v3 与预算生效字段</div></div><button class="button secondary">导出</button><span></span></div><div class="info-row"><div><div class="row-title">数据库备份</div><div class="row-meta">复制 SQLite 到备份目录</div></div><button class="button secondary">备份</button><span></span></div></div></div></div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const pageButtons = [...document.querySelectorAll("[data-page-target]")];
+    const pages = [...document.querySelectorAll("[data-page]")];
+    const pageTitle = document.getElementById("pageTitle");
+    const pageMeta = document.getElementById("pageMeta");
+
+    function setRoute(pageName, tabName) {
+      const nextHash = `#${pageName}/${tabName}`;
+      if (window.location.hash !== nextHash) {
+        window.history.replaceState(null, "", nextHash);
+      }
+    }
+
+    function showPage(pageName, preferredTabName, shouldSetRoute = true) {
+      pageButtons.forEach((button) => button.classList.toggle("active", button.dataset.pageTarget === pageName));
+      pages.forEach((page) => {
+        const active = page.dataset.page === pageName;
+        page.classList.toggle("active", active);
+        if (active) {
+          pageTitle.textContent = page.dataset.title;
+          pageMeta.textContent = page.dataset.meta;
+          const firstTab = page.querySelector("[data-tab-target]");
+          const targetTab = preferredTabName && page.querySelector(`[data-tab="${preferredTabName}"]`) ? preferredTabName : firstTab?.dataset.tabTarget;
+          if (targetTab) showTab(page, targetTab, shouldSetRoute);
+        }
+      });
+    }
+
+    function showTab(page, tabName, shouldSetRoute = true) {
+      page.querySelectorAll("[data-tab-target]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.tabTarget === tabName);
+      });
+      page.querySelectorAll("[data-tab]").forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.tab === tabName);
+      });
+      if (shouldSetRoute) setRoute(page.dataset.page, tabName);
+    }
+
+    function applyRoute() {
+      const rawHash = window.location.hash.replace(/^#/, "");
+      if (!rawHash) {
+        showPage("dashboard", "dashboard-overview", false);
+        return;
+      }
+      const [pageName, tabName] = rawHash.split("/");
+      const page = pages.find((item) => item.dataset.page === pageName);
+      if (!page) {
+        showPage("dashboard", "dashboard-overview", false);
+        return;
+      }
+      showPage(pageName, tabName, false);
+    }
+
+    pageButtons.forEach((button) => {
+      button.addEventListener("click", () => showPage(button.dataset.pageTarget));
+    });
+
+    pages.forEach((page) => {
+      page.querySelectorAll("[data-tab-target]").forEach((button) => {
+        button.addEventListener("click", () => showTab(page, button.dataset.tabTarget));
+      });
+    });
+
+    window.addEventListener("hashchange", applyRoute);
+    applyRoute();
+  </script>
+</body>
+</html>

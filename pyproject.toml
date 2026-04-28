@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "private-ledger"
+version = "0.1.0"
+description = "草莓私帐管理系统桌面版"
+dependencies = [
+  "PySide6>=6.7,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+private-ledger = "private_ledger.app:main"
+private-ledger-sync-obsidian = "private_ledger.sync_obsidian:main"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"private_ledger.assets" = ["*.png"]
