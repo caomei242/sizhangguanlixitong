@@ -685,6 +685,11 @@ class MainWindow(QMainWindow):
         detail_type = str(payload.get("detail_type") or "")
         category = str(payload.get("category") or "")
         name = str(payload.get("name") or "")
+        aliases = {
+            str(value).strip()
+            for value in list(payload.get("aliases") or [])
+            if str(value).strip()
+        }
         target_status = str(payload.get("target_status") or "")
         mode = str(payload.get("mode") or "single")
         match_rows = list(payload.get("match_rows") or [])
@@ -700,14 +705,25 @@ class MainWindow(QMainWindow):
             if mode in {"all_other", "all_panel"}:
                 if not any(
                     transaction.transaction_type == str(item.get("detail_type") or "")
-                    and transaction.category in {str(item.get("category") or ""), str(item.get("name") or "")}
+                    and transaction.category
+                    in (
+                        {
+                            str(item.get("category") or "").strip(),
+                            str(item.get("name") or "").strip(),
+                        }
+                        | {
+                            str(value).strip()
+                            for value in list(item.get("aliases") or [])
+                            if str(value).strip()
+                        }
+                    )
                     for item in match_rows
                 ):
                     continue
             else:
                 if transaction.transaction_type != detail_type:
                     continue
-                if transaction.category not in {category, name}:
+                if transaction.category not in ({category.strip(), name.strip()} | aliases):
                     continue
             matched.append(transaction)
 

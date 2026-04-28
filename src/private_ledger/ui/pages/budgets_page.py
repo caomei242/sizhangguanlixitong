@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from PySide6.QtCore import QDate, Qt, Signal
@@ -1130,6 +1131,7 @@ class BudgetsPage(QWidget):
                 {
                     "name": getattr(detail_row, "name", "") or "",
                     "category": getattr(detail_row, "category", "") or "",
+                    "notes": getattr(detail_row, "notes", "") or "",
                     "detail_type": detail_type,
                     "line_kind": normalized_kind,
                     "month": month,
@@ -1139,9 +1141,69 @@ class BudgetsPage(QWidget):
                     "delta": delta.quantize(Decimal("0.01")),
                     "status": self._annual_month_item_status(normalized_kind, planned, actual, pending, getattr(detail_row, "notes", "") or ""),
                     "bucket_other": bucket_other,
+                    "match_names": {getattr(detail_row, "name", "") or ""},
+                    "match_categories": {getattr(detail_row, "category", "") or "", getattr(detail_row, "name", "") or ""},
                 }
             )
+        rows = self._merge_annual_month_detail_rows(rows)
         return sorted(rows, key=lambda row: (row["name"] == "其他", row["name"]))
+
+    def _merge_annual_month_detail_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        merged: dict[tuple[str, str], dict[str, object]] = {}
+        for row in rows:
+            merge_key = (
+                str(row.get("detail_type") or ""),
+                self._annual_month_alias_key(str(row.get("category") or row.get("name") or "")),
+            )
+            existing = merged.get(merge_key)
+            if existing is None:
+                merged[merge_key] = dict(row)
+                continue
+
+            existing_display_priority = self._annual_month_display_priority(existing)
+            row_display_priority = self._annual_month_display_priority(row)
+            existing["planned"] = (parse_decimal(existing.get("planned")) + parse_decimal(row.get("planned"))).quantize(Decimal("0.01"))
+            existing["actual"] = (parse_decimal(existing.get("actual")) + parse_decimal(row.get("actual"))).quantize(Decimal("0.01"))
+            existing["pending"] = (parse_decimal(existing.get("pending")) + parse_decimal(row.get("pending"))).quantize(Decimal("0.01"))
+            existing["bucket_other"] = bool(existing.get("bucket_other")) and bool(row.get("bucket_other"))
+            existing["match_names"] = set(existing.get("match_names") or set()) | set(row.get("match_names") or set())
+            existing["match_categories"] = set(existing.get("match_categories") or set()) | set(row.get("match_categories") or set())
+
+            combined_notes: list[str] = []
+            for note in (str(existing.get("notes") or "").strip(), str(row.get("notes") or "").strip()):
+                if note and note not in combined_notes:
+                    combined_notes.append(note)
+            existing["notes"] = "\n".join(combined_notes)
+
+            if row_display_priority > existing_display_priority:
+                existing["name"] = row.get("name", "")
+                existing["category"] = row.get("category", "")
+                existing["line_kind"] = row.get("line_kind", "")
+
+        for row in merged.values():
+            planned = parse_decimal(row.get("planned"))
+            actual = parse_decimal(row.get("actual"))
+            pending = parse_decimal(row.get("pending"))
+            line_kind = str(row.get("line_kind") or "")
+            row["delta"] = ((actual - planned) if line_kind == "收入" else (planned - actual)).quantize(Decimal("0.01"))
+            row["status"] = self._annual_month_item_status(line_kind, planned, actual, pending, str(row.get("notes") or ""))
+        return list(merged.values())
+
+    def _annual_month_display_priority(self, row: dict[str, object]) -> tuple[int, int, int, int]:
+        planned = parse_decimal(row.get("planned"))
+        pending = parse_decimal(row.get("pending"))
+        actual = parse_decimal(row.get("actual"))
+        return (
+            1 if planned > Decimal("0.00") else 0,
+            1 if pending > Decimal("0.00") else 0,
+            1 if actual > Decimal("0.00") else 0,
+            len(str(row.get("name") or "")),
+        )
+
+    def _annual_month_alias_key(self, value: str) -> str:
+        normalized = value.strip()
+        normalized = re.sub(r"[（(](上个月|上月|当月|本月|这个月)[)）]\s*$", "", normalized)
+        return normalized or value.strip()
 
     def _annual_month_item_status(self, line_kind: str, planned: Decimal, actual: Decimal, pending: Decimal, notes: str) -> str:
         if "草稿待调整" in notes:
@@ -1324,31 +1386,37 @@ class BudgetsPage(QWidget):
         status_text = str(row_values.get("status") or "")
         cell = QWidget()
         cell.setProperty("sectionRole", "status-cell")
-        cell.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QHBoxLayout(cell)
-        layout.setContentsMargins(3, 2, 3, 2)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(6)
         if self._is_actionable_pending_row(row_values):
-            confirm_button = make_secondary_button("待确认 · 确认")
+            badge = TagLabel(status_text or "待确认", "amber")
+            badge.setProperty("sectionRole", "status-badge")
+            badge.setToolTip("这条预算项还有待确认流水。")
+            confirm_button = make_secondary_button("确认")
             confirm_button.setProperty("sectionRole", "status-action")
             confirm_button.setProperty("statusTone", "pending")
+            confirm_button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             confirm_button.setToolTip("确认并同步这条预算项对应的待确认流水。")
             confirm_button.clicked.connect(
-                lambda checked=False, month_key=self._month_key_for_annual_row(row_values), detail_type=str(row_values.get("detail_type") or ""), category=str(row_values.get("category") or ""), name=str(row_values.get("name") or ""): self._confirm_annual_status_row(
+                lambda checked=False, month_key=self._month_key_for_annual_row(row_values), detail_type=str(row_values.get("detail_type") or ""), category=str(row_values.get("category") or ""), name=str(row_values.get("name") or ""), aliases=self._annual_row_aliases(row_values): self._confirm_annual_status_row(
                     month_key,
                     detail_type,
                     category,
                     name,
+                    aliases,
                 )
             )
-            layout.addWidget(confirm_button, 1)
+            layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(confirm_button, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             table.setRowHeight(row, max(table.rowHeight(row), 36))
         else:
             badge = TagLabel(status_text or "未发生", self._status_tone(status_text))
             badge.setProperty("sectionRole", "status-badge")
             badge.setToolTip("状态按预算与流水自动计算；没有待确认金额的行保持只读。")
-            layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignCenter)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         table.setCellWidget(row, column, cell)
 
     def _confirm_annual_status_row(
@@ -1357,6 +1425,7 @@ class BudgetsPage(QWidget):
         detail_type: str,
         category: str,
         name: str,
+        aliases: list[str] | None = None,
     ) -> None:
         self._emit_annual_status_change(
             {
@@ -1364,10 +1433,22 @@ class BudgetsPage(QWidget):
                 "detail_type": detail_type,
                 "category": category,
                 "name": name,
+                "aliases": list(aliases or []),
                 "target_status": "已确认",
                 "mode": "single",
             }
         )
+
+    def _annual_row_aliases(self, row_values: dict[str, object]) -> list[str]:
+        aliases = {
+            str(value).strip()
+            for value in (
+                set(row_values.get("match_names") or set())
+                | set(row_values.get("match_categories") or set())
+            )
+            if str(value).strip()
+        }
+        return sorted(aliases)
 
     def _status_tone(self, status: str) -> str:
         normalized = status.strip()
@@ -1402,6 +1483,7 @@ class BudgetsPage(QWidget):
                         "detail_type": str(row.get("detail_type") or ""),
                         "category": str(row.get("category") or ""),
                         "name": str(row.get("name") or ""),
+                        "aliases": self._annual_row_aliases(row),
                     }
                     for row in pending_rows
                 ],
@@ -1481,6 +1563,7 @@ class BudgetsPage(QWidget):
                 "detail_type": str(row_values.get("detail_type") or ""),
                 "category": str(row_values.get("category") or ""),
                 "name": str(row_values.get("name") or ""),
+                "aliases": self._annual_row_aliases(row_values),
                 "target_status": "已确认",
                 "mode": "same_category",
             }
@@ -1501,6 +1584,7 @@ class BudgetsPage(QWidget):
                         "detail_type": str(row.get("detail_type") or ""),
                         "category": str(row.get("category") or ""),
                         "name": str(row.get("name") or ""),
+                        "aliases": self._annual_row_aliases(row),
                     }
                     for row in pending_rows
                 ],

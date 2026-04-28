@@ -4,7 +4,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractButton, QComboBox, QFrame, QLabel, QSizePolicy, QTableWidget
+from PySide6.QtWidgets import QAbstractButton, QComboBox, QFrame, QHeaderView, QLabel, QSizePolicy, QTableWidget
 
 from private_ledger.app import build_app
 from private_ledger.domain.models import (
@@ -134,7 +134,8 @@ def _assert_compact_status_column(
     assert 88 <= table.columnWidth(0) <= 132
     assert 88 <= table.columnWidth(1) <= 132
     status_column = table.columnCount() - 1
-    assert 110 <= table.columnWidth(status_column) <= 150
+    assert table.horizontalHeader().sectionResizeMode(status_column) == QHeaderView.ResizeMode.Fixed
+    assert 116 <= table.columnWidth(status_column) <= 140
     for row in range(table.rowCount()):
         key_item = table.item(row, key_column)
         assert key_item is not None
@@ -165,6 +166,94 @@ def test_annual_month_status_keeps_pending_rows_actionable(qapp) -> None:
     assert page._annual_month_item_status("收入", Decimal("100.00"), Decimal("120.00"), Decimal("10.00"), "") == "待确认"
     assert page._annual_month_item_status("支出", Decimal("100.00"), Decimal("80.00"), Decimal("5.00"), "") == "待确认"
     assert page._is_actionable_pending_row({"pending": Decimal("1.00"), "status": "已达成"})
+
+
+def test_annual_month_detail_rows_merge_salary_aliases(qapp) -> None:
+    page = BudgetsPage()
+    page._annual_matrix = SimpleNamespace(year=2026)
+
+    salary_rows = [
+        SimpleNamespace(
+            name="工资",
+            category="工资",
+            notes="",
+            line_kind="收入",
+            group_name="未设预算但本月有实际",
+            status="未设预算",
+            planned_total=Decimal("0.00"),
+            planned_months={"2026-03": Decimal("0.00")},
+            actual_months={"2026-03": Decimal("11632.22")},
+            pending_months={"2026-03": Decimal("0.00")},
+            effective_start_month="2026-03",
+            effective_end_month="2026-03",
+        ),
+        SimpleNamespace(
+            name="工资（上个月）",
+            category="工资（上个月）",
+            notes="",
+            line_kind="收入",
+            group_name="收入计划",
+            status="未发生",
+            planned_total=Decimal("11642.00"),
+            planned_months={"2026-03": Decimal("11642.00")},
+            actual_months={"2026-03": Decimal("0.00")},
+            pending_months={"2026-03": Decimal("0.00")},
+            effective_start_month="2026-03",
+            effective_end_month="2026-03",
+        ),
+    ]
+
+    rows = page._annual_month_detail_rows(salary_rows, 3, "收入")
+
+    assert len(rows) == 1
+    merged = rows[0]
+    assert merged["name"] == "工资（上个月）"
+    assert merged["category"] == "工资（上个月）"
+    assert merged["planned"] == Decimal("11642.00")
+    assert merged["actual"] == Decimal("11632.22")
+    assert merged["delta"] == Decimal("-9.78")
+    assert merged["bucket_other"] is False
+    assert merged["match_names"] == {"工资", "工资（上个月）"}
+    assert merged["match_categories"] == {"工资", "工资（上个月）"}
+
+
+def test_sync_annual_budget_status_matches_alias_categories(tmp_path, qapp) -> None:
+    _app, window = build_app(data_dir=tmp_path)
+    repo = window.repository
+    repo.upsert_transaction(
+        Transaction(
+            id="txn-salary-pending",
+            occurred_on="2026-03-10",
+            transaction_type="收入",
+            category="工资",
+            amount="11632.22",
+            from_account_id="",
+            to_account_id="",
+            status="待确认",
+            source="测试",
+            notes="",
+            related_transaction_id="",
+            created_at="2026-03-10T10:00:00",
+            updated_at="2026-03-10T10:00:00",
+        )
+    )
+
+    window._sync_annual_budget_status(
+        {
+            "month_key": "2026-03",
+            "detail_type": "收入",
+            "category": "工资（上个月）",
+            "name": "工资（上个月）",
+            "aliases": ["工资", "工资（上个月）"],
+            "target_status": "已确认",
+            "mode": "single",
+        }
+    )
+
+    updated = next(txn for txn in repo.list_transactions() if txn.id == "txn-salary-pending")
+    assert updated.status == "已确认"
+
+    window.close()
 
 
 def test_main_window_shows_navigation_and_loaded_dashboard_data(tmp_path, qapp) -> None:

@@ -451,9 +451,11 @@ def sync_table_columns(table: QTableWidget) -> None:
                 if column in {0, 1}:
                     header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
                     table.setColumnWidth(column, min(table.columnWidth(column), 132))
+                elif 2 <= column < table.columnCount() - 1:
+                    header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
                 elif column == table.columnCount() - 1:
                     header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-                    table.setColumnWidth(column, 124)
+                    table.setColumnWidth(column, 132)
                 else:
                     header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         else:
