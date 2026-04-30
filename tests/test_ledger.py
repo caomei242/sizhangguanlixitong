@@ -5,6 +5,7 @@ from decimal import Decimal
 from private_ledger.domain.ledger import (
     build_annual_budget_matrix,
     build_budget_comparison,
+    build_daily_trend,
     build_monthly_trend,
     build_month_summary,
     build_period_summary,
@@ -338,8 +339,53 @@ def test_build_budget_comparison_matches_lines_and_unbudgeted_actuals() -> None:
     rent = next(row for row in comparison.rows if row.line_id == "line-rent")
     assert rent.status == "草稿待调整"
 
-    unbudgeted_names = {row.name for row in comparison.rows if row.group_name == "未设预算但本月有实际"}
-    assert unbudgeted_names == {"交通", "奖金"}
+    unbudgeted_rows = {
+        (row.name, row.group_name)
+        for row in comparison.rows
+        if row.group_name in {"当期收入", "当期支出"} and not row.line_id
+    }
+    assert unbudgeted_rows == {("交通", "当期支出"), ("奖金", "当期收入")}
+
+
+def test_build_budget_comparison_matches_known_budget_aliases() -> None:
+    budget_lines = [
+        _budget_line("line-rent-subsidy", "收入", "房租补贴（当月）", "房租补贴", "1800.00"),
+        _budget_line("line-tirzepatide", "支出", "提尔", "提尔", "600.00"),
+        _budget_line("line-tax", "支出", "税务相关", "税务相关", "500.00"),
+    ]
+    transactions = [
+        _budget_txn("income-fund", "收入", "公积金收入", "1800.00"),
+        _budget_txn("expense-tirzepatide", "支出", "替尔泊肽", "576.20"),
+        _budget_txn("expense-tax-city", "支出", "佛山税务", "200.00"),
+        _budget_txn("expense-tax-common", "支出", "税务", "426.04"),
+        _budget_txn("income-other-a", "收入", "其他", "100.00"),
+        _budget_txn("income-other-b", "收入", "其他收入", "100.00"),
+    ]
+
+    comparison = build_budget_comparison("2026-04", budget_lines, transactions)
+
+    subsidy = next(row for row in comparison.rows if row.line_id == "line-rent-subsidy")
+    assert subsidy.category == "房租补贴"
+    assert subsidy.actual_amount == Decimal("1800.00")
+    assert subsidy.delta_amount == Decimal("0.00")
+    assert not [row for row in comparison.rows if not row.line_id and row.name == "公积金收入"]
+
+    tirzepatide = next(row for row in comparison.rows if row.line_id == "line-tirzepatide")
+    assert tirzepatide.category == "提尔"
+    assert tirzepatide.actual_amount == Decimal("576.20")
+    assert tirzepatide.delta_amount == Decimal("-23.80")
+    assert not [row for row in comparison.rows if not row.line_id and row.name == "替尔泊肽"]
+
+    tax = next(row for row in comparison.rows if row.line_id == "line-tax")
+    assert tax.category == "税务相关"
+    assert tax.actual_amount == Decimal("626.04")
+    assert tax.delta_amount == Decimal("126.04")
+    assert not [row for row in comparison.rows if not row.line_id and row.name in {"佛山税务", "税务"}]
+
+    other = next(row for row in comparison.rows if not row.line_id and row.name == "其他收入")
+    assert other.actual_amount == Decimal("200.00")
+    assert other.category == "其他收入"
+    assert not [row for row in comparison.rows if not row.line_id and row.name == "其他"]
 
 
 def test_is_budget_line_effective_in_month_uses_inclusive_string_month_range() -> None:
@@ -496,7 +542,7 @@ def test_build_annual_budget_matrix_builds_budget_line_and_unbudgeted_detail_row
 
     zero_months = [Decimal("0.00")] * 12
     food = next(row for row in matrix.detail_rows if row.row_key == "line-food")
-    assert food.group_name == "支出预算"
+    assert food.group_name == "长期支出"
     assert food.line_kind == "分类预算"
     assert food.name == "日常餐饮"
     assert food.category == "餐饮"
@@ -551,7 +597,7 @@ def test_build_annual_budget_matrix_builds_budget_line_and_unbudgeted_detail_row
     assert food.status == "有待确认"
 
     unbudgeted_actual = next(row for row in matrix.detail_rows if row.row_key == "分类预算:娱乐")
-    assert unbudgeted_actual.group_name == "未设预算但本月有实际"
+    assert unbudgeted_actual.group_name == "当期支出"
     assert unbudgeted_actual.planned_months == zero_months
     assert unbudgeted_actual.actual_months == [
         Decimal("0.00"),
@@ -575,6 +621,7 @@ def test_build_annual_budget_matrix_builds_budget_line_and_unbudgeted_detail_row
     assert unbudgeted_actual.status == "未设预算"
 
     unbudgeted_pending = next(row for row in matrix.detail_rows if row.row_key == "分类预算:交通")
+    assert unbudgeted_pending.group_name == "当期支出"
     assert unbudgeted_pending.actual_months == zero_months
     assert unbudgeted_pending.pending_months == [
         Decimal("0.00"),
@@ -712,6 +759,29 @@ def test_build_monthly_trend_uses_natural_quarter_and_excludes_pending() -> None
     assert [point.income for point in trend] == [Decimal("800.00"), Decimal("0.00"), Decimal("0.00")]
     assert [point.expense for point in trend] == [Decimal("300.00"), Decimal("900.00"), Decimal("0.00")]
     assert [point.balance for point in trend] == [Decimal("500.00"), Decimal("-900.00"), Decimal("0.00")]
+
+
+def test_build_daily_trend_uses_each_day_and_separates_pending() -> None:
+    selection = PeriodSelection(granularity="day", year=2026, month=4, quarter=2)
+    transactions = [
+        _period_txn("apr-income", "2026-04-05", "收入", "800.00"),
+        _period_txn("apr-expense", "2026-04-05", "支出", "300.00"),
+        _period_txn("apr-refund", "2026-04-06", "退款", "80.00"),
+        _period_txn("apr-pending", "2026-04-07", "支出", "400.00", "待确认"),
+        _period_txn("may-expense", "2026-05-01", "支出", "999.00"),
+    ]
+
+    trend = build_daily_trend(selection, transactions)
+
+    assert len(trend) == 30
+    assert trend[0].month_key == "2026-04-01"
+    assert trend[0].label == "1日"
+    assert trend[4].income == Decimal("800.00")
+    assert trend[4].expense == Decimal("300.00")
+    assert trend[4].balance == Decimal("500.00")
+    assert trend[5].expense == Decimal("-80.00")
+    assert trend[6].expense == Decimal("0.00")
+    assert trend[6].pending_amount == Decimal("400.00")
 
 
 def test_collect_due_reminders_supports_threshold_and_date_rules() -> None:

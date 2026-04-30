@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -26,6 +27,15 @@ from private_ledger.domain.models import (
 
 
 TWOPLACES = Decimal("0.01")
+INCOME_BUDGET_MATCH_ALIASES = {
+    "公积金收入": "房租补贴",
+    "其他": "其他收入",
+}
+EXPENSE_BUDGET_MATCH_ALIASES = {
+    "替尔泊肽": "提尔",
+    "佛山税务": "税务相关",
+    "税务": "税务相关",
+}
 
 
 def parse_decimal(value: str | int | float | Decimal | None) -> Decimal:
@@ -118,17 +128,45 @@ def build_month_summary(
 
 
 def _budget_match_key(line: BudgetLine) -> str:
-    return (line.category or line.name or "未分类").strip() or "未分类"
+    match_type = "收入" if line.line_kind == "收入" else "支出"
+    return _normalize_budget_match_key(line.category or line.name or "未分类", match_type)
 
 
-def _budget_group_name(line_kind: str) -> str:
-    if line_kind == "收入":
-        return "收入计划"
-    if line_kind == "固定支出":
-        return "固定支出"
+def _normalize_budget_match_key(value: str, match_type: str) -> str:
+    normalized = (value or "").strip()
+    normalized = normalized.replace("（上个月）", "").replace("(上个月)", "")
+    normalized = normalized.replace("（上月）", "").replace("(上月)", "")
+    normalized = normalized.replace("（当月）", "").replace("(当月)", "")
+    normalized = normalized.replace("（本月）", "").replace("(本月)", "")
+    normalized = normalized.replace("（这个月）", "").replace("(这个月)", "")
+    alias_map = INCOME_BUDGET_MATCH_ALIASES if match_type == "收入" else EXPENSE_BUDGET_MATCH_ALIASES
+    normalized = alias_map.get(normalized, normalized)
+    return normalized.strip() or "未分类"
+
+
+def _is_current_budget_scope(
+    start_month: str,
+    end_month: str,
+    month_key: str,
+) -> bool:
+    start = (start_month or month_key).strip() or month_key
+    end = (end_month or "").strip()
+    return start == month_key and end == month_key
+
+
+def _budget_group_name(
+    line_kind: str,
+    start_month: str,
+    end_month: str,
+    month_key: str,
+    *,
+    unbudgeted: bool = False,
+) -> str:
     if line_kind == "储蓄计划":
-        return "储蓄计划"
-    return "支出预算"
+        return "储蓄"
+    if line_kind == "收入":
+        return "当期收入" if unbudgeted or _is_current_budget_scope(start_month, end_month, month_key) else "长期收入"
+    return "当期支出" if unbudgeted or _is_current_budget_scope(start_month, end_month, month_key) else "长期支出"
 
 
 def _is_expense_budget_kind(line_kind: str) -> bool:
@@ -221,11 +259,11 @@ def _finalize_annual_detail_rows(
     detail_rows_by_key: dict[str, AnnualBudgetDetailRow],
 ) -> list[AnnualBudgetDetailRow]:
     group_order = {
-        "收入计划": 0,
-        "支出预算": 1,
-        "固定支出": 2,
-        "储蓄计划": 3,
-        "未设预算但本月有实际": 4,
+        "长期收入": 0,
+        "当期收入": 1,
+        "长期支出": 2,
+        "当期支出": 3,
+        "储蓄": 4,
     }
     detail_rows = list(detail_rows_by_key.values())
     for row in detail_rows:
@@ -282,7 +320,7 @@ def build_budget_comparison(
         if transaction.transaction_type not in {"收入", "支出", "退款"}:
             continue
         amount = parse_decimal(transaction.amount)
-        category = (transaction.category or "未分类").strip() or "未分类"
+        category = _normalize_budget_match_key(transaction.category or "未分类", transaction.transaction_type)
 
         if transaction.status != "已确认":
             if transaction.transaction_type in {"收入", "支出"}:
@@ -319,7 +357,12 @@ def build_budget_comparison(
         rows.append(
             BudgetLineComparison(
                 line_id=line.id,
-                group_name=_budget_group_name(line.line_kind),
+                group_name=_budget_group_name(
+                    line.line_kind,
+                    line.effective_start_month,
+                    line.effective_end_month,
+                    month_key,
+                ),
                 line_kind=line.line_kind,
                 name=line.name,
                 category=match_key,
@@ -345,7 +388,7 @@ def build_budget_comparison(
         rows.append(
             BudgetLineComparison(
                 line_id="",
-                group_name="未设预算但本月有实际",
+                group_name=_budget_group_name(line_kind, month_key, month_key, month_key, unbudgeted=True),
                 line_kind=line_kind,
                 name=category,
                 category=category,
@@ -370,7 +413,7 @@ def build_budget_comparison(
         rows.append(
             BudgetLineComparison(
                 line_id="",
-                group_name="未设预算但本月有实际",
+                group_name=_budget_group_name(line_kind, month_key, month_key, month_key, unbudgeted=True),
                 line_kind=line_kind,
                 name=category,
                 category=category,
@@ -387,11 +430,11 @@ def build_budget_comparison(
         )
 
     group_order = {
-        "收入计划": 0,
-        "支出预算": 1,
-        "固定支出": 2,
-        "储蓄计划": 3,
-        "未设预算但本月有实际": 4,
+        "长期收入": 0,
+        "当期收入": 1,
+        "长期支出": 2,
+        "当期支出": 3,
+        "储蓄": 4,
     }
     rows.sort(key=lambda row: (group_order.get(row.group_name, 99), row.line_kind, row.name))
     summary = BudgetComparisonSummary(
@@ -520,6 +563,8 @@ def build_annual_budget_matrix(
 
 
 def period_label(selection: PeriodSelection) -> str:
+    if selection.granularity == "day":
+        return f"{selection.year:04d}-{selection.month:02d} 日趋势"
     if selection.granularity == "month":
         return f"{selection.year:04d}-{selection.month:02d}"
     if selection.granularity == "quarter":
@@ -528,7 +573,7 @@ def period_label(selection: PeriodSelection) -> str:
 
 
 def period_month_keys(selection: PeriodSelection) -> list[str]:
-    if selection.granularity == "month":
+    if selection.granularity in {"day", "month"}:
         return [f"{selection.year:04d}-{selection.month:02d}"]
     if selection.granularity == "quarter":
         start_month = (selection.quarter - 1) * 3 + 1
@@ -589,6 +634,51 @@ def build_monthly_trend(selection: PeriodSelection, transactions: list[Transacti
                 income=summary.income,
                 expense=summary.expense,
                 balance=summary.balance,
+                pending_amount=summary.pending_amount,
+            )
+        )
+    return points
+
+
+def build_daily_trend(selection: PeriodSelection, transactions: list[Transaction]) -> list[MonthlyTrendPoint]:
+    days_in_month = monthrange(selection.year, selection.month)[1]
+    daily_totals: dict[str, dict[str, Decimal]] = {
+        f"{selection.year:04d}-{selection.month:02d}-{day:02d}": {
+            "income": Decimal("0.00"),
+            "expense": Decimal("0.00"),
+            "pending": Decimal("0.00"),
+        }
+        for day in range(1, days_in_month + 1)
+    }
+    for transaction in transactions:
+        day_key = transaction.occurred_on[:10]
+        if day_key not in daily_totals:
+            continue
+        amount = parse_decimal(transaction.amount)
+        if transaction.status != "已确认":
+            if transaction.transaction_type in {"收入", "支出"}:
+                daily_totals[day_key]["pending"] += amount
+            continue
+        if transaction.transaction_type == "收入":
+            daily_totals[day_key]["income"] += amount
+        elif transaction.transaction_type == "支出":
+            daily_totals[day_key]["expense"] += amount
+        elif transaction.transaction_type == "退款":
+            daily_totals[day_key]["expense"] -= amount
+
+    points = []
+    for day_key, totals in daily_totals.items():
+        income = totals["income"].quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+        expense = totals["expense"].quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+        pending = totals["pending"].quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+        points.append(
+            MonthlyTrendPoint(
+                month_key=day_key,
+                income=income,
+                expense=expense,
+                balance=(income - expense).quantize(TWOPLACES, rounding=ROUND_HALF_UP),
+                pending_amount=pending,
+                label=f"{int(day_key[-2:])}日",
             )
         )
     return points

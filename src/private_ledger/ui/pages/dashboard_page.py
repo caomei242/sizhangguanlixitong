@@ -4,6 +4,8 @@ from PySide6.QtCharts import QBarCategoryAxis, QChart, QChartView, QLineSeries, 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsLineItem,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -11,6 +13,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -25,25 +28,51 @@ class PeriodTrendChart(QChartView):
         self.chart = QChart()
         super().__init__(self.chart)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setMouseTracking(True)
         self.setMinimumHeight(360)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setLineWidth(0)
+        self.setStyleSheet("QChartView { background: #f7f9fc; border: none; }")
+        self.setAutoFillBackground(True)
+        self.viewport().setAutoFillBackground(True)
+        self.viewport().setStyleSheet("background: transparent; border: none;")
         self.chart.legend().setVisible(True)
-        self.chart.setBackgroundVisible(False)
-        self.chart.setPlotAreaBackgroundVisible(False)
+        self.chart.setBackgroundVisible(True)
+        self.chart.setBackgroundBrush(QColor("#f7f9fc"))
+        self.chart.setPlotAreaBackgroundVisible(True)
+        self.chart.setPlotAreaBackgroundBrush(QColor(255, 255, 255, 0))
+        self.chart.setPlotAreaBackgroundPen(QPen(QColor(255, 255, 255, 0), 0))
+        self._points: list[MonthlyTrendPoint] = []
+        self._trend_granularity = "month"
+        hover_pen = QPen(QColor("#8b99b1"), 1.2)
+        hover_pen.setStyle(Qt.PenStyle.DashLine)
+        self._hover_line = QGraphicsLineItem(self.chart)
+        self._hover_line.setPen(hover_pen)
+        self._hover_line.setZValue(20)
+        self._hover_line.hide()
 
-    def load_points(self, points: list[MonthlyTrendPoint]) -> None:
+    def load_points(self, points: list[MonthlyTrendPoint], trend_granularity: str = "month") -> None:
         self.chart.removeAllSeries()
         for axis in self.chart.axes():
             self.chart.removeAxis(axis)
+        self._points = points
+        self._trend_granularity = trend_granularity
+        self._hide_hover_line()
         if not points:
             self.chart.setTitle("当前范围暂无已确认流水")
             return
 
-        self.chart.setTitle("按月趋势")
+        is_daily_trend = trend_granularity == "day"
+        self.chart.setTitle("按日趋势" if is_daily_trend else "按月趋势")
         series_specs = [
             ("收入", [point.income for point in points], QColor("#1f9f72")),
             ("支出", [point.expense for point in points], QColor("#3f67d9")),
             ("结余", [point.balance for point in points], QColor("#e24b64")),
         ]
+        if any(float(getattr(point, "pending_amount", 0) or 0) for point in points):
+            series_specs.append(
+                ("待确认", [getattr(point, "pending_amount", 0) for point in points], QColor("#d9901f"))
+            )
         values = []
         for name, amounts, color in series_specs:
             series = QLineSeries()
@@ -56,8 +85,11 @@ class PeriodTrendChart(QChartView):
             self.chart.addSeries(series)
 
         axis_x = QBarCategoryAxis()
-        axis_x.append([f"{int(point.month_key[5:7])}月" for point in points])
-        axis_x.setTitleText("月份")
+        axis_x.append([
+            point.label or (f"{int(point.month_key[-2:])}日" if is_daily_trend else f"{int(point.month_key[5:7])}月")
+            for point in points
+        ])
+        axis_x.setTitleText("日期" if is_daily_trend else "月份")
 
         minimum = min(values) if values else 0
         maximum = max(values) if values else 0
@@ -75,6 +107,70 @@ class PeriodTrendChart(QChartView):
 
     def series_count_for_test(self) -> int:
         return len(self.chart.series())
+
+    def hover_summary_for_test(self, index: int) -> str:
+        return self._hover_summary(index)
+
+    def _nearest_point_index(self, x: float) -> int | None:
+        if not self._points:
+            return None
+        plot_area = self.chart.plotArea()
+        if not plot_area.contains(x, plot_area.center().y()):
+            return None
+        if len(self._points) == 1:
+            return 0
+        ratio = (x - plot_area.left()) / max(1.0, plot_area.width())
+        return max(0, min(len(self._points) - 1, round(ratio * (len(self._points) - 1))))
+
+    def _hover_x_for_index(self, index: int) -> float:
+        plot_area = self.chart.plotArea()
+        if len(self._points) <= 1:
+            return plot_area.center().x()
+        step = plot_area.width() / max(1, len(self._points) - 1)
+        return plot_area.left() + index * step
+
+    def _hover_summary(self, index: int) -> str:
+        point = self._points[index]
+        label = point.label or point.month_key
+        return "\n".join(
+            [
+                label,
+                f"收入：{format_money(point.income)}",
+                f"支出：{format_money(point.expense)}",
+                f"结余：{format_money(point.balance)}",
+                f"待确认：{format_money(getattr(point, 'pending_amount', '0.00'))}",
+            ]
+        )
+
+    def _show_hover_line(self, index: int) -> None:
+        plot_area = self.chart.plotArea()
+        x = self._hover_x_for_index(index)
+        self._hover_line.setLine(x, plot_area.top(), x, plot_area.bottom())
+        self._hover_line.show()
+
+    def _hide_hover_line(self) -> None:
+        self._hover_line.hide()
+        QToolTip.hideText()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: ANN001
+        position = event.position()
+        plot_area = self.chart.plotArea()
+        if not plot_area.contains(position):
+            self._hide_hover_line()
+            super().mouseMoveEvent(event)
+            return
+        index = self._nearest_point_index(position.x())
+        if index is None:
+            self._hide_hover_line()
+            super().mouseMoveEvent(event)
+            return
+        self._show_hover_line(index)
+        QToolTip.showText(event.globalPosition().toPoint(), self._hover_summary(index), self)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: ANN001
+        self._hide_hover_line()
+        super().leaveEvent(event)
 
 
 class DashboardPage(QWidget):
@@ -108,7 +204,7 @@ class DashboardPage(QWidget):
         self.transactions_table = QTableWidget()
         self.pending_list = QListWidget()
 
-        prepare_table(self.trend_table, ["月份", "收入", "支出", "结余"])
+        prepare_table(self.trend_table, ["月份", "收入", "支出", "结余", "待确认"])
         prepare_table(self.overview_accounts_table, ["账户", "当前余额", "状态"])
         prepare_table(self.overview_transactions_table, ["日期", "标签", "状态", "金额"])
         prepare_table(self.accounts_table, ["账户", "类型", "用途", "当前余额", "状态"])
@@ -172,7 +268,7 @@ class DashboardPage(QWidget):
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(12)
 
-        trend_card, trend_layout = create_card("按月趋势", "已确认收入、已确认支出、结余")
+        trend_card, trend_layout = create_card("收支趋势", "默认按日查看，切到季/年时自动按月汇总")
         self._tag_section(trend_card, "workspace-main", "workspace", "spacious")
         self._tag_preview_widget(self.trend_chart, "trend-canvas", "spacious")
         self.trend_chart.setMinimumHeight(390)
@@ -268,6 +364,7 @@ class DashboardPage(QWidget):
     def load_snapshot(self, payload: dict) -> None:
         period_summary = payload.get("period_summary")
         trend_points = payload.get("trend_points", [])
+        trend_granularity = payload.get("trend_granularity", "month")
         is_period_mode = payload.get("period_granularity") in {"quarter", "year"} and period_summary is not None
         self.month_metrics.setVisible(not is_period_mode)
         self.period_cockpit.setVisible(is_period_mode)
@@ -331,8 +428,8 @@ class DashboardPage(QWidget):
                 "amber" if summary.pending_amount > 0 else "gray",
             )
 
-        self.trend_chart.load_points(trend_points)
-        self._load_trend_table(trend_points)
+        self.trend_chart.load_points(trend_points, trend_granularity)
+        self._load_trend_table(trend_points, trend_granularity)
 
         accounts = payload.get("accounts", [])
         self._load_accounts_table(self.accounts_table, accounts)
@@ -418,14 +515,18 @@ class DashboardPage(QWidget):
             self.pending_list.addItem(item)
             self.overview_pending_list.addItem(item)
 
-    def _load_trend_table(self, points: list[MonthlyTrendPoint]) -> None:
+    def _load_trend_table(self, points: list[MonthlyTrendPoint], trend_granularity: str = "month") -> None:
+        headers = ["日期" if trend_granularity == "day" else "月份", "收入", "支出", "结余", "待确认"]
+        self.trend_table.setColumnCount(len(headers))
+        self.trend_table.setHorizontalHeaderLabels(headers)
         self.trend_table.setRowCount(len(points))
         for row_index, point in enumerate(points):
             values = [
-                point.month_key,
+                point.label or point.month_key,
                 format_money(point.income),
                 format_money(point.expense),
                 format_money(point.balance),
+                format_money(getattr(point, "pending_amount", "0.00")),
             ]
             for column_index, value in enumerate(values):
                 self.trend_table.setItem(row_index, column_index, QTableWidgetItem(value))

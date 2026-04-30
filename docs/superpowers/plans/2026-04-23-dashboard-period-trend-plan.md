@@ -1,5 +1,9 @@
 # Dashboard Period Trend Implementation Plan
 
+## Status
+
+Implemented and superseded by later dashboard refinements. The original plan added `月 / 季 / 年` period switching; the current application also supports `日` range selection and daily trend points. Confirmed income, expense, and balance remain conservative; pending transactions are shown separately and do not enter formal totals. For current architecture, see `docs/architecture.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add `月 / 季 / 年` period switching to the existing dashboard and show a quarter/year monthly trend cockpit with confirmed income, expense, balance, and pending totals.
@@ -488,4 +492,3 @@ Include:
 - `B 趋势驾驶舱` layout
 - tests/compile/offscreen smoke results
 - any known limitations
-

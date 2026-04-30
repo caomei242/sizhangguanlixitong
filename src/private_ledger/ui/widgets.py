@@ -358,7 +358,7 @@ def _table_profile(headers: list[str]) -> tuple[str, str, str]:
         return "dense", "matrix", "annual-summary"
     if headers[:4] == ["预算项", "类型", "标签", "生效月份"] and len(headers) > 20:
         return "dense", "matrix", "annual-detail"
-    if headers == ["预算项", "类型", "标签", "生效月份", "计划", "已确认", "待确认", "差额", "状态"]:
+    if headers == ["预算项", "类型", "标签", "生效方式", "开始月份", "结束月份", "计划", "已确认", "待确认", "差额"]:
         return "dense", "ledger", "budget-workbench"
     if headers == ["预算项", "类型", "标签", "备注", "生效月份", "计划", "已确认实际", "待确认", "差额", "进度", "状态"]:
         return "dense", "ledger", "budget-ledger"
@@ -450,13 +450,23 @@ def sync_table_columns(table: QTableWidget) -> None:
             for column in range(table.columnCount()):
                 if column in {0, 1}:
                     header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-                    table.setColumnWidth(column, min(table.columnWidth(column), 132))
-                elif 2 <= column < table.columnCount() - 1:
+                    table.setColumnWidth(column, min(table.columnWidth(column), 112))
+                elif column >= 2:
                     header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
-                elif column == table.columnCount() - 1:
+        elif table_profile == "budget-workbench":
+            compact_columns = {
+                0: 132,
+                1: 92,
+                2: 126,
+                3: 98,
+                4: 96,
+                5: 96,
+            }
+            for column in range(table.columnCount()):
+                if column in compact_columns:
                     header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-                    table.setColumnWidth(column, 132)
+                    table.setColumnWidth(column, min(table.columnWidth(column), compact_columns[column]))
                 else:
-                    header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+                    header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
         else:
             header.setSectionResizeMode(table.columnCount() - 1, QHeaderView.ResizeMode.Stretch)

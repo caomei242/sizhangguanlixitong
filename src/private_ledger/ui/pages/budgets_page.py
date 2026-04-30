@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStyledItemDelegate,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -38,6 +39,65 @@ from private_ledger.ui.widgets import (
     refresh_style,
     sync_table_columns,
 )
+
+
+class ComboBoxItemDelegate(QStyledItemDelegate):
+    def __init__(self, choices: list[str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._choices = choices
+
+    def createEditor(self, parent, _option, _index):
+        editor = QComboBox(parent)
+        editor.addItems(self._choices)
+        return editor
+
+    def setEditorData(self, editor, index) -> None:
+        value = index.data(Qt.ItemDataRole.EditRole) or index.data(Qt.ItemDataRole.DisplayRole) or ""
+        position = editor.findText(str(value))
+        editor.setCurrentIndex(position if position >= 0 else 0)
+
+    def setModelData(self, editor, model, index) -> None:
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
+
+
+class MonthComboBox(QComboBox):
+    dateChanged = Signal(QDate)
+
+    def __init__(self, date: QDate | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._date = QDate.currentDate()
+        self._year = self._date.year()
+        self._populate(date or self._date)
+        self.currentTextChanged.connect(self._handle_text_changed)
+
+    def date(self) -> QDate:
+        return self._date
+
+    def setDate(self, date: QDate) -> None:
+        if not date.isValid():
+            return
+        self._populate(QDate(date.year(), date.month(), 1), emit=False)
+
+    def _populate(self, date: QDate, *, emit: bool = False) -> None:
+        month_date = QDate(date.year(), date.month(), 1)
+        self._date = month_date
+        self._year = month_date.year()
+        self.blockSignals(True)
+        self.clear()
+        for month in range(1, 13):
+            self.addItem(f"{self._year:04d}-{month:02d}")
+        self.setCurrentIndex(month_date.month() - 1)
+        self.blockSignals(False)
+        if emit:
+            self.dateChanged.emit(self._date)
+
+    def _handle_text_changed(self, text: str) -> None:
+        date = QDate.fromString(f"{text}-01", "yyyy-MM-dd")
+        if not date.isValid():
+            return
+        self._date = QDate(date.year(), date.month(), 1)
+        self.dateChanged.emit(self._date)
+
 
 ANNUAL_QUARTER_PALETTES = (
     {
@@ -78,6 +138,8 @@ ANNUAL_QUARTER_PALETTES = (
     },
 )
 
+BUDGET_WORKBENCH_GROUPS = ("长期收入", "当期收入", "长期支出", "当期支出", "储蓄")
+
 
 class BudgetsPage(QWidget):
     budget_save_requested = Signal(object)
@@ -99,10 +161,10 @@ class BudgetsPage(QWidget):
         self._annual_detail_quick_view = "全部"
         self._annual_detail_hide_single_month = False
         self._loading = False
+        self._suppress_comparison_item_change = False
+        self._pending_workbench_focus: dict[str, str] | None = None
 
-        self.month_edit = QDateEdit(QDate.currentDate())
-        self.month_edit.setDisplayFormat("yyyy-MM")
-        self.month_edit.setCalendarPopup(True)
+        self.month_edit = MonthComboBox(QDate.currentDate())
         self.tag_filter_combo = QComboBox()
         self.tag_filter_combo.addItem("全部标签")
         self.scope_label = QLabel("预算项自动合计；待确认金额单独展示。")
@@ -113,6 +175,8 @@ class BudgetsPage(QWidget):
         self.save_budget_button = make_secondary_button("保存预算说明")
         self.seed_from_actual_button = make_secondary_button("从实际生成预算草稿")
         self.new_line_button = QPushButton("新增预算项")
+        self.link_same_budget_checkbox = QCheckBox("联动同名项目")
+        self.link_same_budget_checkbox.setToolTip("勾选后，表内编辑会同步处理其它月份同名或同标签的预算项。")
 
         self.planned_income_card = MetricCard("计划收入")
         self.planned_expense_card = MetricCard("计划支出")
@@ -191,7 +255,7 @@ class BudgetsPage(QWidget):
         self.annual_month_cards: dict[int, dict[str, object]] = {}
         self.annual_quarter_sections: dict[int, dict[str, object]] = {}
         self._expanded_annual_other_buckets: set[tuple[int, str]] = set()
-        comparison_headers = ["预算项", "类型", "标签", "生效月份", "计划", "已确认", "待确认", "差额", "状态"]
+        comparison_headers = ["预算项", "类型", "标签", "生效方式", "开始月份", "结束月份", "计划", "已确认", "待确认", "差额"]
         table_headers = ["预算项", "类型", "标签", "备注", "生效月份", "计划", "已确认实际", "待确认", "差额", "进度", "状态"]
         annual_detail_headers = ["预算项", "类型", "标签", "生效月份"]
         for month in range(1, 13):
@@ -220,9 +284,20 @@ class BudgetsPage(QWidget):
         self.annual_detail_table.setProperty("tableProfile", "annual-detail")
         prepare_table(self.effective_scope_table, ["生效方式", "适合场景", "显示口径"])
         self.effective_scope_table.setProperty("tableProfile", "scope-guide")
-        self.comparison_table.setProperty("tableProfile", "monthly-workbench")
+        self.comparison_table.setProperty("tableProfile", "budget-workbench")
         self.income_table.setProperty("tableProfile", "monthly-income")
         self.expense_table.setProperty("tableProfile", "monthly-expense")
+        self.comparison_table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed
+        )
+        self.comparison_table.setItemDelegateForColumn(
+            1,
+            ComboBoxItemDelegate(["收入", "单独支出", "固定支出", "分类支出", "储蓄"], self.comparison_table),
+        )
+        self.comparison_table.setItemDelegateForColumn(
+            3,
+            ComboBoxItemDelegate(["仅当前月", "每月持续", "指定月份范围"], self.comparison_table),
+        )
         self.annual_detail_table.horizontalHeaderItem(31).setToolTip(
             "年度差额沿用新口径：收入看实际减预期，支出看预期减实际。"
         )
@@ -258,7 +333,7 @@ class BudgetsPage(QWidget):
         self.annual_sheet_focus_label.setWordWrap(True)
         self.annual_actual_summary_label = QLabel("实际回看")
         self.annual_actual_summary_label.setObjectName("SectionTitle")
-        self.effective_scope_hint_label = QLabel("当前编辑器里的生效方式仍以右侧“快速编辑”为准，这里只做口径对照。")
+        self.effective_scope_hint_label = QLabel("当月主表支持直接改名称、标签、生效月份和计划金额；右侧只补充高级口径。")
         self.effective_scope_hint_label.setObjectName("MutedText")
         self.effective_scope_hint_label.setWordWrap(True)
         self.effective_scope_summary_label = QLabel("先认生效方式，再回到预算工作台编辑；当前选中的口径会在下面高亮。")
@@ -272,7 +347,7 @@ class BudgetsPage(QWidget):
         self.annual_actual_summary_label.setProperty("sectionRole", "annual-read-guide")
 
         self.kind_combo = QComboBox()
-        self.kind_combo.addItems(["标签预算", "固定支出", "储蓄计划", "收入", "支出"])
+        self.kind_combo.addItems(["分类支出", "固定支出", "储蓄", "收入", "单独支出"])
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("例如：餐饮预算 / 房租 / 项目奖金")
         self.category_edit = QLineEdit()
@@ -280,7 +355,7 @@ class BudgetsPage(QWidget):
         self.planned_amount_edit = QLineEdit()
         self.planned_amount_edit.setPlaceholderText("填写本项计划金额")
         self.effective_mode_combo = QComboBox()
-        self.effective_mode_combo.addItems(["仅当前月", "从当前月起", "指定月份范围"])
+        self.effective_mode_combo.addItems(["仅当前月", "每月持续", "指定月份范围"])
         self.effective_start_edit = QDateEdit(QDate.currentDate())
         self.effective_start_edit.setDisplayFormat("yyyy-MM")
         self.effective_start_edit.setCalendarPopup(True)
@@ -302,10 +377,10 @@ class BudgetsPage(QWidget):
         self.delete_line_button.setEnabled(False)
         self.editor_context_label = QLabel("新预算项")
         self.editor_context_label.setObjectName("SectionTitle")
-        self.editor_hint_label = QLabel("按 生效方式 -> 标签 -> 金额 -> 备注 的顺序连续填写；左侧未设预算行会自动带入建议金额。")
+        self.editor_hint_label = QLabel("主表现在可以直接改项目、类型、标签、生效方式和金额；这里仅补充计划日、提醒、刚性项目和备注。")
         self.editor_hint_label.setObjectName("MutedText")
         self.editor_hint_label.setWordWrap(True)
-        self.effective_mode_hint_label = QLabel("当前生效方式：仅当前月，适合活动、一次性购买或当月临时预算。")
+        self.effective_mode_hint_label = QLabel("当前生效方式：仅当前月，适合补贴、奖金、活动和当月临时预算。")
         self.effective_mode_hint_label.setObjectName("MutedText")
         self.effective_mode_hint_label.setWordWrap(True)
         self.editor_followup_hint_label = QLabel("计划日、提醒和刚性项目放在最后补充，保存后仍会回到左侧当月主表对比。")
@@ -340,6 +415,7 @@ class BudgetsPage(QWidget):
         month_row.addWidget(QLabel("标签"))
         month_row.addWidget(self.tag_filter_combo, 0)
         month_row.addStretch(1)
+        month_row.addWidget(self.link_same_budget_checkbox)
         month_row.addWidget(self.seed_from_actual_button)
         month_row.addWidget(self.new_line_button)
         month_strip_layout.addLayout(month_row)
@@ -371,7 +447,7 @@ class BudgetsPage(QWidget):
             metric_grid.addWidget(card, 0, index)
         top_layout.addLayout(metric_grid)
 
-        comparison_card, comparison_layout = create_card("当月预算项对比", "工作台主视图只保留当月对比，收入项和支出项拆到独立页。")
+        comparison_card, comparison_layout = create_card("当月预算工作台", "按长期收入、当期收入、长期支出、当期支出和储蓄分组；常用字段直接在表格里改。")
         comparison_card.setProperty("sectionRole", "budget-comparison-panel")
         comparison_layout.addWidget(self.comparison_table)
 
@@ -379,13 +455,15 @@ class BudgetsPage(QWidget):
         income_card.setProperty("sectionRole", "budget-income-panel")
         income_layout.addWidget(self.income_table)
 
-        expense_card, expense_layout = create_card("预计支出项", "支出预期与实际，包含标签预算、固定支出和储蓄计划。")
+        expense_card, expense_layout = create_card("预计支出项", "支出预期与实际，包含分类支出、固定支出和储蓄。")
         expense_card.setProperty("sectionRole", "budget-expense-panel")
         expense_layout.addWidget(self.expense_table)
 
-        editor_card, editor_layout = create_card("快速编辑", "预算项会和同名标签流水做对比。")
-        editor_card.setProperty("sectionRole", "budget-fill-desk")
+        editor_card, editor_layout = create_card("高级补充", "主表负责直接改预算结构；计划日、提醒、刚性项目和备注放这里补充。")
+        editor_card.setProperty("sectionRole", "budget-workbench-editor")
         editor_card.setProperty("sectionDensity", "comfortable")
+        editor_card.setMinimumWidth(332)
+        editor_card.setMaximumWidth(372)
         editor_layout.addWidget(self.editor_context_label)
         editor_layout.addWidget(self.editor_hint_label)
         editor_fill_title = QLabel("填写台")
@@ -468,23 +546,17 @@ class BudgetsPage(QWidget):
         effective_scope_layout.addWidget(self.effective_scope_summary_label)
         for mode, scene, summary in (
             ("仅当前月", "活动、一次性购买、临时预算", "只在当前预算月生效，适合按月试跑或一次性支出。"),
-            ("从当前月起", "房租、话费、会员、长期储蓄", "从开始月持续生效，不额外设置结束月。"),
+            ("每月持续", "工资、房租、话费、会员、长期储蓄", "从开始月持续生效，不额外设置结束月。"),
             ("指定月份范围", "课程、阶段性计划、短周期专项", "按开始月到结束月生效，适合阶段型预算。"),
         ):
             effective_scope_layout.addWidget(self._create_effective_scope_row(mode, scene, summary))
         self.effective_scope_table.hide()
 
-        self.workbench_splitter.addWidget(comparison_card)
-        self.workbench_splitter.addWidget(editor_card)
-        self.workbench_splitter.setStretchFactor(0, 3)
-        self.workbench_splitter.setStretchFactor(1, 2)
-        self.workbench_splitter.setSizes([860, 560])
-
         monthly_layout = QVBoxLayout(self.monthly_tab)
         monthly_layout.setContentsMargins(0, 0, 0, 0)
         monthly_layout.setSpacing(14)
         monthly_layout.addWidget(top_card)
-        monthly_layout.addWidget(self.workbench_splitter, 1)
+        monthly_layout.addWidget(comparison_card, 1)
 
         annual_tab_layout = QVBoxLayout(self.annual_tab)
         annual_tab_layout.setContentsMargins(0, 0, 0, 0)
@@ -501,12 +573,12 @@ class BudgetsPage(QWidget):
 
         effective_tab_layout = QVBoxLayout(self.effective_tab)
         effective_tab_layout.setContentsMargins(0, 0, 0, 0)
+        effective_tab_layout.setSpacing(14)
         effective_tab_layout.addWidget(effective_scope_card)
+        effective_tab_layout.addWidget(editor_card)
 
         self.tabs.addTab(self.monthly_tab, "预算工作台")
         self.tabs.addTab(self.annual_tab, "全年十二月")
-        self.tabs.addTab(self.income_tab, "预计收入项")
-        self.tabs.addTab(self.expense_tab, "预计支出项")
         self.tabs.addTab(self.effective_tab, "生效范围")
 
         self._populate_effective_scope_table()
@@ -524,6 +596,7 @@ class BudgetsPage(QWidget):
         self.save_line_button.clicked.connect(self._emit_budget_line_save)
         self.delete_line_button.clicked.connect(self._emit_budget_line_delete)
         self.tag_filter_combo.currentTextChanged.connect(lambda *_args: self._load_comparison_tables(self._comparison) if self._comparison else None)
+        self.comparison_table.itemChanged.connect(self._handle_comparison_item_changed)
         self.annual_detail_kind_filter_combo.currentTextChanged.connect(self._apply_annual_detail_filters)
         self.annual_detail_tag_filter_combo.currentTextChanged.connect(self._apply_annual_detail_filters)
         self.annual_detail_status_filter_combo.currentTextChanged.connect(self._apply_annual_detail_filters)
@@ -751,13 +824,17 @@ class BudgetsPage(QWidget):
             label.setObjectName("MutedText")
             header_row.addWidget(label)
         header_row.addStretch(1)
+        confirm_selected_button = make_secondary_button("确认选中项")
+        confirm_selected_button.setProperty("sectionRole", "annual-month-other-action")
+        confirm_selected_button.setEnabled(False)
+        header_row.addWidget(confirm_selected_button)
         confirm_all_button = make_secondary_button("确认本区待确认")
         confirm_all_button.setProperty("sectionRole", "annual-month-other-action")
         confirm_all_button.setEnabled(False)
         header_row.addWidget(confirm_all_button)
         layout.addLayout(header_row)
         table = QTableWidget()
-        prepare_table(table, ["项目", "标签", "计划", "实际", "待确认", "差额", "状态"])
+        prepare_table(table, ["项目", "标签", "计划", "实际", "待确认", "差额"])
         table.setProperty("tableProfile", "budget-ledger")
         table.setMinimumHeight(210)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -769,11 +846,16 @@ class BudgetsPage(QWidget):
             "planned_label": planned_label,
             "actual_label": actual_label,
             "pending_label": pending_label,
+            "confirm_selected_button": confirm_selected_button,
             "confirm_all_button": confirm_all_button,
             "month": month,
             "detail_type": detail_type,
             "rows": [],
         }
+        table.itemSelectionChanged.connect(lambda panel_ref=panel: self._sync_annual_detail_action_button(panel_ref))
+        confirm_selected_button.clicked.connect(
+            lambda checked=False, panel_ref=panel: self._confirm_selected_annual_detail_panel(panel_ref)
+        )
         confirm_all_button.clicked.connect(
             lambda checked=False, panel_ref=panel: self._confirm_all_annual_detail_panel(panel_ref)
         )
@@ -829,7 +911,7 @@ class BudgetsPage(QWidget):
         layout.addLayout(actions_row)
 
         table = QTableWidget()
-        prepare_table(table, ["项目", "标签", "计划", "实际", "待确认", "差额", "状态"])
+        prepare_table(table, ["项目", "标签", "计划", "实际", "待确认", "差额"])
         table.setProperty("tableProfile", "budget-ledger")
         table.setMinimumHeight(132)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -879,6 +961,7 @@ class BudgetsPage(QWidget):
             self.load_annual_matrix(annual_matrix)
         self.clear_line_editor()
         self._loading = False
+        self._restore_workbench_focus()
 
     def load_annual_matrix(self, annual_matrix) -> None:
         self._annual_matrix = annual_matrix
@@ -898,7 +981,7 @@ class BudgetsPage(QWidget):
         )
         self.annual_planned_expense_card.set_content(
             format_money(annual_matrix.planned_expense),
-            "标签预算、固定支出、储蓄计划自动合计",
+            "分类支出、固定支出和储蓄自动合计",
             "预期",
             "gray",
         )
@@ -939,8 +1022,8 @@ class BudgetsPage(QWidget):
     def clear_line_editor(self) -> None:
         self._current_line_id = ""
         self.editor_context_label.setText("新预算项")
-        self.editor_hint_label.setText("按 生效方式 -> 标签 -> 金额 -> 备注 的顺序连续填写；左侧未设预算行会自动带入建议金额。")
-        self.kind_combo.setCurrentText("标签预算")
+        self.editor_hint_label.setText("常改字段现在可以直接在主表里改；这里主要补计划日、提醒、刚性项目和备注。")
+        self.kind_combo.setCurrentText("分类支出")
         self.name_edit.clear()
         self.category_edit.clear()
         self.planned_amount_edit.clear()
@@ -956,7 +1039,7 @@ class BudgetsPage(QWidget):
     def _populate_effective_scope_table(self) -> None:
         rows = [
             ("仅当前月", "活动、一次性购买、临时预算", "当前月单独生效"),
-            ("从当前月起", "房租、话费、会员、长期储蓄", "从开始月持续生效"),
+            ("每月持续", "工资、房租、话费、会员、长期储蓄", "从开始月持续生效"),
             ("指定月份范围", "课程、阶段性计划、短周期专项", "开始月到结束月之间生效"),
         ]
         self.effective_scope_table.setRowCount(len(rows))
@@ -973,7 +1056,7 @@ class BudgetsPage(QWidget):
         mode = self.effective_mode_combo.currentText().strip()
         row_by_mode = {
             "仅当前月": 0,
-            "从当前月起": 1,
+            "每月持续": 1,
             "指定月份范围": 2,
         }
         row = row_by_mode.get(mode)
@@ -1227,12 +1310,10 @@ class BudgetsPage(QWidget):
     def _is_other_annual_detail_item(self, detail_row) -> bool:
         name = (getattr(detail_row, "name", "") or "").strip()
         category = (getattr(detail_row, "category", "") or "").strip()
-        group_name = (getattr(detail_row, "group_name", "") or "").strip()
         status = (getattr(detail_row, "status", "") or "").strip()
         return (
             "其他" in name
             or "其他" in category
-            or group_name == "未设预算但本月有实际"
             or status in {"未设预算", "有待确认"}
         )
 
@@ -1241,11 +1322,9 @@ class BudgetsPage(QWidget):
             return False
         planned_total = parse_decimal(getattr(detail_row, "planned_total", Decimal("0.00")))
         status = (getattr(detail_row, "status", "") or "").strip()
-        group_name = (getattr(detail_row, "group_name", "") or "").strip()
         return (
             planned_total <= Decimal("0.00")
             or status in {"未设预算", "有待确认"}
-            or group_name == "未设预算但本月有实际"
             or self._is_other_annual_detail_item(detail_row)
         )
 
@@ -1283,7 +1362,6 @@ class BudgetsPage(QWidget):
                     format_money(row_values["actual"]),
                     format_money(row_values["pending"]),
                     self._format_signed_money(row_values["delta"]),
-                    row_values["status"],
                 ]
                 for column_index, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
@@ -1296,9 +1374,14 @@ class BudgetsPage(QWidget):
                         brush_kind = "收入" if detail_type == "收入" else "支出"
                         item.setForeground(self._annual_detail_delta_brush(brush_kind, parse_decimal(row_values["delta"])))
                     table.setItem(row, column_index, item)
-                self._set_annual_status_cell_widget(table, row, 6, row_values)
             sync_table_columns(table)
             table.resizeRowsToContents()
+            target_row = 0
+            for index, row_values in enumerate(rows):
+                if self._is_actionable_pending_row(row_values):
+                    target_row = index
+                    break
+            table.selectRow(target_row)
             self._fit_annual_detail_table_height(table)
             self._sync_annual_detail_action_button(panel)
     def _populate_annual_month_other_panel(
@@ -1346,7 +1429,6 @@ class BudgetsPage(QWidget):
                 format_money(row_values["actual"]),
                 format_money(row_values["pending"]),
                 self._format_signed_money(row_values["delta"]),
-                row_values["status"],
             ]
             for column_index, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
@@ -1358,7 +1440,6 @@ class BudgetsPage(QWidget):
                 if column_index == 5:
                     item.setForeground(self._annual_detail_delta_brush(str(row_values["detail_type"]), parse_decimal(row_values["delta"])))
                 other_table.setItem(row, column_index, item)
-            self._set_annual_status_cell_widget(other_table, row, 6, row_values)
         sync_table_columns(other_table)
         other_table.resizeRowsToContents()
         self._fit_annual_detail_table_height(other_table)
@@ -1375,49 +1456,6 @@ class BudgetsPage(QWidget):
     def _is_actionable_pending_row(self, row_values: dict[str, object]) -> bool:
         pending = parse_decimal(row_values.get("pending", Decimal("0.00")))
         return pending > Decimal("0.00")
-
-    def _set_annual_status_cell_widget(
-        self,
-        table: QTableWidget,
-        row: int,
-        column: int,
-        row_values: dict[str, object],
-    ) -> None:
-        status_text = str(row_values.get("status") or "")
-        cell = QWidget()
-        cell.setProperty("sectionRole", "status-cell")
-        cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout = QHBoxLayout(cell)
-        layout.setContentsMargins(6, 2, 6, 2)
-        layout.setSpacing(6)
-        if self._is_actionable_pending_row(row_values):
-            badge = TagLabel(status_text or "待确认", "amber")
-            badge.setProperty("sectionRole", "status-badge")
-            badge.setToolTip("这条预算项还有待确认流水。")
-            confirm_button = make_secondary_button("确认")
-            confirm_button.setProperty("sectionRole", "status-action")
-            confirm_button.setProperty("statusTone", "pending")
-            confirm_button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-            confirm_button.setToolTip("确认并同步这条预算项对应的待确认流水。")
-            confirm_button.clicked.connect(
-                lambda checked=False, month_key=self._month_key_for_annual_row(row_values), detail_type=str(row_values.get("detail_type") or ""), category=str(row_values.get("category") or ""), name=str(row_values.get("name") or ""), aliases=self._annual_row_aliases(row_values): self._confirm_annual_status_row(
-                    month_key,
-                    detail_type,
-                    category,
-                    name,
-                    aliases,
-                )
-            )
-            layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            layout.addWidget(confirm_button, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            table.setRowHeight(row, max(table.rowHeight(row), 36))
-        else:
-            badge = TagLabel(status_text or "未发生", self._status_tone(status_text))
-            badge.setProperty("sectionRole", "status-badge")
-            badge.setToolTip("状态按预算与流水自动计算；没有待确认金额的行保持只读。")
-            layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        table.setCellWidget(row, column, cell)
 
     def _confirm_annual_status_row(
         self,
@@ -1450,23 +1488,36 @@ class BudgetsPage(QWidget):
         }
         return sorted(aliases)
 
-    def _status_tone(self, status: str) -> str:
-        normalized = status.strip()
-        if normalized in {"已达成", "进行中", "未发生"}:
-            return "green"
-        if normalized in {"临界", "有待确认", "草稿待调整", "未设预算", "待确认"}:
-            return "amber"
-        if normalized == "超支":
-            return "red"
-        return "gray"
-
     def _emit_annual_status_change(self, payload: dict[str, object]) -> None:
         self.annual_status_change_requested.emit(payload)
 
     def _sync_annual_detail_action_button(self, panel: dict[str, object]) -> None:
+        confirm_selected_button: QPushButton = panel["confirm_selected_button"]  # type: ignore[assignment]
         confirm_all_button: QPushButton = panel["confirm_all_button"]  # type: ignore[assignment]
         rows: list[dict[str, object]] = panel.get("rows", [])  # type: ignore[assignment]
+        selected_row = self._selected_annual_detail_row(panel)
+        confirm_selected_button.setEnabled(selected_row is not None and self._is_actionable_pending_row(selected_row))
         confirm_all_button.setEnabled(any(self._is_actionable_pending_row(row) for row in rows))
+
+    def _selected_annual_detail_row(self, panel: dict[str, object]) -> dict[str, object] | None:
+        table: QTableWidget = panel["table"]  # type: ignore[assignment]
+        rows: list[dict[str, object]] = panel.get("rows", [])  # type: ignore[assignment]
+        current_row = table.currentRow()
+        if current_row < 0 or current_row >= len(rows):
+            return None
+        return rows[current_row]
+
+    def _confirm_selected_annual_detail_panel(self, panel: dict[str, object]) -> None:
+        row_values = self._selected_annual_detail_row(panel)
+        if row_values is None or not self._is_actionable_pending_row(row_values):
+            return
+        self._confirm_annual_status_row(
+            self._month_key_for_annual_row(row_values),
+            str(row_values.get("detail_type") or ""),
+            str(row_values.get("category") or ""),
+            str(row_values.get("name") or ""),
+            self._annual_row_aliases(row_values),
+        )
 
     def _confirm_all_annual_detail_panel(self, panel: dict[str, object]) -> None:
         rows: list[dict[str, object]] = panel.get("rows", [])  # type: ignore[assignment]
@@ -1612,13 +1663,13 @@ class BudgetsPage(QWidget):
         self.planned_income_card.set_content(
             format_money(summary.planned_income),
             f"实际 {format_money(summary.actual_income)}",
-            "收入计划",
+            "收入",
             "green",
         )
         self.planned_expense_card.set_content(
             format_money(summary.planned_expense),
-            f"已确认支出 {format_money(summary.actual_expense)}",
-            "自动合计",
+            f"已确认支出 {format_money(summary.actual_expense)}，含储蓄",
+            "支出+储蓄",
             "gray",
         )
         balance_tone = "green" if summary.actual_balance >= 0 else "red"
@@ -1641,41 +1692,99 @@ class BudgetsPage(QWidget):
         rows = self._filtered_rows(all_rows)
         income_rows = [
             row for row in rows
-            if row.line_kind == "收入" or (row.group_name == "未设预算但本月有实际" and row.line_kind == "收入")
+            if row.line_kind == "收入"
         ]
-        expense_rows = [row for row in rows if row not in income_rows]
+        expense_rows = [row for row in rows if row.line_kind != "收入"]
         self._load_workbench_table(rows)
         self._load_table(self.income_table, income_rows, "当前月份还没有预计收入项。")
         self._load_table(self.expense_table, expense_rows, "当前月份还没有预计支出项。")
-        self.seed_from_actual_button.setEnabled(any(row.group_name == "未设预算但本月有实际" for row in all_rows))
+        self.seed_from_actual_button.setEnabled(
+            any(row.status in {"未设预算", "有待确认"} and not row.line_id for row in all_rows)
+        )
 
     def _load_workbench_table(self, rows: list) -> None:
-        self.comparison_table.clearSpans()
-        self.comparison_table.setRowCount(0)
-        current_group = ""
-        for comparison_row in rows:
-            if comparison_row.group_name != current_group:
-                current_group = comparison_row.group_name
-                self._append_group_row(self.comparison_table, current_group)
-            self._append_workbench_row(comparison_row)
-        if not rows:
-            self._append_empty_row(self.comparison_table, "当前月份还没有预算项对比。")
-        sync_table_columns(self.comparison_table)
-        self.comparison_table.resizeRowsToContents()
+        self._suppress_comparison_item_change = True
+        try:
+            self.comparison_table.clearSpans()
+            self.comparison_table.setRowCount(0)
+            rows_by_group: dict[str, list] = {group: [] for group in BUDGET_WORKBENCH_GROUPS}
+            for comparison_row in rows:
+                rows_by_group.setdefault(comparison_row.group_name, []).append(comparison_row)
+            ordered_groups = list(BUDGET_WORKBENCH_GROUPS) + [
+                group_name
+                for group_name in rows_by_group
+                if group_name not in BUDGET_WORKBENCH_GROUPS
+            ]
+            for group_name in ordered_groups:
+                group_rows = rows_by_group.get(group_name, [])
+                self._append_workbench_group_row(group_name, group_rows)
+                for comparison_row in group_rows:
+                    self._append_workbench_row(comparison_row)
+            if not rows:
+                self._append_empty_row(self.comparison_table, "当前月份还没有预算项对比。")
+            sync_table_columns(self.comparison_table)
+            self.comparison_table.resizeRowsToContents()
+        finally:
+            self._suppress_comparison_item_change = False
+
+    def _append_workbench_group_row(self, group_name: str, rows: list) -> None:
+        row = self.comparison_table.rowCount()
+        self.comparison_table.insertRow(row)
+        planned_total = sum((parse_decimal(item.planned_amount) for item in rows), Decimal("0.00"))
+        actual_total = sum((parse_decimal(item.actual_amount) for item in rows), Decimal("0.00"))
+        pending_total = sum((parse_decimal(item.pending_amount) for item in rows), Decimal("0.00"))
+        delta_total = sum((parse_decimal(item.delta_amount) for item in rows), Decimal("0.00"))
+        if rows:
+            label = (
+                f"【{group_name}】  {len(rows)} 项"
+                f"  ·  计划 {format_money(planned_total)}"
+                f"  ·  已确认 {format_money(actual_total)}"
+                f"  ·  待确认 {format_money(pending_total)}"
+                f"  ·  差额 {self._format_signed_money(delta_total)}"
+            )
+        else:
+            label = f"【{group_name}】  暂无项目"
+        item = QTableWidgetItem(label)
+        item.setData(Qt.ItemDataRole.UserRole, {"is_group": True, "group_name": group_name})
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        if group_name in {"当期收入", "当期支出"}:
+            item.setBackground(QColor("#f1f6ff"))
+            item.setForeground(QBrush(QColor("#315a9a")))
+        elif group_name == "储蓄":
+            item.setBackground(QColor("#eef9f2"))
+            item.setForeground(QBrush(QColor("#24724a")))
+        else:
+            item.setBackground(QColor("#e4efff"))
+            item.setForeground(QBrush(QColor("#254f9c")))
+        self.comparison_table.setItem(row, 0, item)
+        self.comparison_table.setSpan(row, 0, 1, self.comparison_table.columnCount())
+        self.comparison_table.setRowHeight(row, 38)
 
     def _append_workbench_row(self, comparison_row) -> None:
         row = self.comparison_table.rowCount()
         self.comparison_table.insertRow(row)
+        planned_amount = parse_decimal(comparison_row.planned_amount)
+        actual_amount = parse_decimal(comparison_row.actual_amount)
+        pending_amount = parse_decimal(comparison_row.pending_amount)
+        delta_amount = parse_decimal(comparison_row.delta_amount)
         values = [
             comparison_row.name,
             self._display_line_kind(comparison_row.line_kind),
             comparison_row.category,
-            self._effective_text(comparison_row.effective_start_month, comparison_row.effective_end_month),
-            format_money(comparison_row.planned_amount),
-            format_money(comparison_row.actual_amount),
-            format_money(comparison_row.pending_amount),
-            self._format_signed_money(comparison_row.delta_amount),
-            comparison_row.status,
+            self._workbench_effective_mode_text(
+                comparison_row.effective_start_month,
+                comparison_row.effective_end_month,
+            ),
+            comparison_row.effective_start_month or self._current_month_key,
+            comparison_row.effective_end_month or "",
+            format_money(planned_amount),
+            format_money(actual_amount),
+            format_money(pending_amount),
+            self._format_signed_money(delta_amount),
         ]
         payload = {
             "is_group": False,
@@ -1686,7 +1795,15 @@ class BudgetsPage(QWidget):
             "notes": comparison_row.notes,
             "effective_start_month": comparison_row.effective_start_month,
             "effective_end_month": comparison_row.effective_end_month,
-            "suggested_amount": f"{parse_decimal(comparison_row.actual_amount):.2f}",
+            "planned_amount": f"{planned_amount:.2f}",
+            "actual_amount": f"{actual_amount:.2f}",
+            "pending_amount": f"{pending_amount:.2f}",
+            "delta_amount": f"{delta_amount:.2f}",
+            "effective_mode": self._workbench_effective_mode_text(
+                comparison_row.effective_start_month,
+                comparison_row.effective_end_month,
+            ),
+            "suggested_amount": f"{actual_amount:.2f}",
             "status": comparison_row.status,
         }
         for column_index, value in enumerate(values):
@@ -1695,13 +1812,209 @@ class BudgetsPage(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, payload)
                 if comparison_row.notes:
                     item.setToolTip(self._one_line_note(comparison_row.notes))
-            if column_index in {4, 5, 6, 7}:
+            editable_columns = {0, 1, 2, 3, 4, 5, 6}
+            if column_index in editable_columns:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if column_index in {6, 7, 8, 9}:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             else:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            if column_index == 8:
-                item.setForeground(self._status_brush(comparison_row.status))
+            if column_index == 8 and pending_amount > Decimal("0.00"):
+                item.setForeground(QBrush(QColor("#a66a00")))
+            if column_index == 9:
+                item.setForeground(self._annual_detail_delta_brush(comparison_row.line_kind, delta_amount))
             self.comparison_table.setItem(row, column_index, item)
+
+    def _restore_workbench_row(self, row: int, payload: dict) -> None:
+        values = [
+            payload.get("name", ""),
+            self._display_line_kind(payload.get("line_kind", "")),
+            payload.get("category", ""),
+            payload.get(
+                "effective_mode",
+                self._workbench_effective_mode_text(
+                    payload.get("effective_start_month", ""),
+                    payload.get("effective_end_month", ""),
+                ),
+            ),
+            payload.get("effective_start_month", "") or self._current_month_key,
+            payload.get("effective_end_month", ""),
+            format_money(payload.get("planned_amount", "0.00")),
+            format_money(payload.get("actual_amount", "0.00")),
+            format_money(payload.get("pending_amount", "0.00")),
+            self._format_signed_money(payload.get("delta_amount", "0.00")),
+        ]
+        self._suppress_comparison_item_change = True
+        try:
+            for column_index, value in enumerate(values):
+                item = self.comparison_table.item(row, column_index)
+                if item is None:
+                    continue
+                item.setText(value)
+        finally:
+            self._suppress_comparison_item_change = False
+
+    def _handle_comparison_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._loading or self._suppress_comparison_item_change:
+            return
+        if item.tableWidget() is not self.comparison_table:
+            return
+        if item.column() not in {0, 1, 2, 3, 4, 5, 6}:
+            return
+        key_item = self.comparison_table.item(item.row(), 0)
+        if key_item is None:
+            return
+        payload = key_item.data(Qt.ItemDataRole.UserRole)
+        if not payload or payload.get("is_group"):
+            return
+        inline_payload = self._build_inline_workbench_payload(item.row(), payload)
+        if inline_payload is None:
+            self._restore_workbench_row(item.row(), payload)
+            return
+        self._pending_workbench_focus = {
+            "line_id": inline_payload["line_id"],
+            "name": inline_payload["name"],
+            "category": inline_payload["category"],
+            "line_kind": inline_payload["line_kind"],
+        }
+        self.budget_line_save_requested.emit(inline_payload)
+
+    def _build_inline_workbench_payload(self, row: int, payload: dict) -> dict | None:
+        def table_text(column: int) -> str:
+            table_item = self.comparison_table.item(row, column)
+            return table_item.text().strip() if table_item is not None else ""
+
+        name = table_text(0)
+        line_kind_text = table_text(1)
+        category = table_text(2)
+        effective_mode = table_text(3)
+        effective_start_month = table_text(4)
+        effective_end_month = table_text(5)
+        planned_text = table_text(6)
+
+        if not name:
+            self.editor_hint_label.setText("预算项名称不能为空，已恢复这一行原值。")
+            return None
+
+        stored_line_kind = self._parse_inline_line_kind(line_kind_text, payload.get("line_kind") or "分类预算")
+        if stored_line_kind is None:
+            self.editor_hint_label.setText("类型请填写 收入、单独支出、固定支出、分类支出 或 储蓄。")
+            return None
+
+        normalized_amount = self._normalize_money_text(planned_text)
+        if not normalized_amount:
+            self.editor_hint_label.setText("计划金额不能为空，已恢复这一行原值。")
+            return None
+        try:
+            planned_amount = f"{parse_decimal(normalized_amount):.2f}"
+        except Exception:
+            self.editor_hint_label.setText("计划金额格式不对，请直接填数字，已恢复这一行原值。")
+            return None
+
+        effective_range = self._parse_inline_effective_range(
+            effective_mode,
+            effective_start_month,
+            effective_end_month,
+        )
+        if effective_range is None:
+            self.editor_hint_label.setText("生效方式请填写 仅当前月、每月持续 或 指定月份范围；月份写成 2026-04。")
+            return None
+        effective_start_month, effective_end_month = effective_range
+
+        existing = next(
+            (line for line in self._budget_lines if line.id == payload.get("line_id")),
+            None,
+        )
+        return {
+            "line_id": payload.get("line_id", ""),
+            "month_key": self.month_edit.date().toString("yyyy-MM"),
+            "line_kind": stored_line_kind,
+            "name": name,
+            "category": category or name,
+            "planned_amount": planned_amount,
+            "effective_start_month": effective_start_month,
+            "effective_end_month": effective_end_month,
+            "day_of_month": existing.day_of_month if existing else None,
+            "is_required": existing.is_required if existing else False,
+            "reminder_days": existing.reminder_days if existing else 0,
+            "notes": existing.notes if existing else (payload.get("notes") or ""),
+            "link_same_budget_lines": self.link_same_budget_checkbox.isChecked(),
+        }
+
+    def _parse_inline_effective_range(
+        self,
+        mode_text: str,
+        start_text: str,
+        end_text: str,
+    ) -> tuple[str, str] | None:
+        mode = self._normalize_effective_mode_text(mode_text)
+        start_month = start_text.strip() or self._current_month_key
+        end_month = end_text.strip()
+        if not re.fullmatch(r"\d{4}-\d{2}", start_month):
+            return None
+        if mode == "仅当前月":
+            return start_month, start_month
+        if mode == "每月持续":
+            return start_month, ""
+        if mode == "指定月份范围":
+            if not re.fullmatch(r"\d{4}-\d{2}", end_month):
+                return None
+            if end_month < start_month:
+                return None
+            return start_month, end_month
+        return None
+
+    def _normalize_effective_mode_text(self, text: str) -> str:
+        normalized = re.sub(r"\s+", "", text.strip())
+        if normalized in {"仅当前月", "当期", "当前月"}:
+            return "仅当前月"
+        if normalized in {"每月持续", "长期", "长期收入", "长期支出", "从当前月起"}:
+            return "每月持续"
+        if normalized in {"指定月份范围", "范围", "区间"}:
+            return "指定月份范围"
+        return ""
+
+    def _parse_inline_line_kind(self, text: str, fallback: str) -> str | None:
+        normalized = re.sub(r"\s+", "", text.strip())
+        if normalized in {"收入"}:
+            return "收入"
+        if normalized in {"支出", "单独支出"}:
+            return "支出"
+        if normalized in {"固定支出"}:
+            return "固定支出"
+        if normalized in {"标签预算", "分类预算", "分类支出"}:
+            return "分类预算"
+        if normalized in {"储蓄", "储蓄计划"}:
+            return "储蓄计划"
+        return fallback if fallback else None
+
+    def _normalize_money_text(self, text: str) -> str:
+        return text.replace("¥", "").replace("$", "").replace(",", "").strip()
+
+    def _restore_workbench_focus(self) -> None:
+        if not self._pending_workbench_focus:
+            return
+        expected = self._pending_workbench_focus
+        self._pending_workbench_focus = None
+        for row in range(self.comparison_table.rowCount()):
+            item = self.comparison_table.item(row, 0)
+            if item is None:
+                continue
+            payload = item.data(Qt.ItemDataRole.UserRole)
+            if not payload or payload.get("is_group"):
+                continue
+            if expected.get("line_id") and payload.get("line_id") == expected.get("line_id"):
+                self.comparison_table.selectRow(row)
+                return
+            if (
+                item.text().strip() == expected.get("name", "")
+                and (self.comparison_table.item(row, 2).text().strip() if self.comparison_table.item(row, 2) else "") == expected.get("category", "")
+                and payload.get("line_kind") == expected.get("line_kind")
+            ):
+                self.comparison_table.selectRow(row)
+                return
 
     def _load_annual_table(self, annual_matrix) -> None:
         self.annual_table.clearSpans()
@@ -2424,7 +2737,7 @@ class BudgetsPage(QWidget):
         mode = self.effective_mode_combo.currentText().strip()
         if mode == "仅当前月":
             return self._current_month_key
-        if mode == "从当前月起":
+        if mode == "每月持续":
             return ""
         return self.effective_end_edit.date().toString("yyyy-MM")
 
@@ -2434,7 +2747,7 @@ class BudgetsPage(QWidget):
         if start == self._current_month_key and end_month == self._current_month_key:
             self.effective_mode_combo.setCurrentText("仅当前月")
         elif not end_month:
-            self.effective_mode_combo.setCurrentText("从当前月起")
+            self.effective_mode_combo.setCurrentText("每月持续")
         else:
             self.effective_mode_combo.setCurrentText("指定月份范围")
         self._sync_effective_controls()
@@ -2452,7 +2765,7 @@ class BudgetsPage(QWidget):
             self._set_effective_range(self._current_month_key, self._current_month_key)
             self.effective_start_edit.setEnabled(False)
             self.effective_end_edit.setEnabled(False)
-        elif mode == "从当前月起":
+        elif mode == "每月持续":
             self.effective_start_edit.setEnabled(True)
             self.effective_end_edit.setEnabled(False)
         else:
@@ -2465,7 +2778,7 @@ class BudgetsPage(QWidget):
         mode = self.effective_mode_combo.currentText().strip()
         hint_by_mode = {
             "仅当前月": "当前生效方式：仅当前月，适合活动、一次性购买或当月临时预算。",
-            "从当前月起": "当前生效方式：从当前月起，适合房租、话费、会员和长期储蓄计划。",
+            "每月持续": "当前生效方式：每月持续，适合工资、房租、话费、会员和长期储蓄。",
             "指定月份范围": "当前生效方式：指定月份范围，适合课程、阶段性计划或短周期专项预算。",
         }
         self.effective_mode_hint_label.setText(hint_by_mode.get(mode, "根据预算口径选择对应的生效方式。"))
@@ -2503,10 +2816,31 @@ class BudgetsPage(QWidget):
         return "差额口径沿用年度明细口径。"
 
     def _display_line_kind(self, line_kind: str) -> str:
-        return "标签预算" if line_kind == "分类预算" else line_kind
+        if line_kind == "分类预算":
+            return "分类支出"
+        if line_kind == "储蓄计划":
+            return "储蓄"
+        if line_kind == "支出":
+            return "单独支出"
+        return line_kind
+
+    def _workbench_effective_mode_text(self, start_month: str, end_month: str) -> str:
+        start_value = (start_month or "").strip() or self._current_month_key
+        end_value = (end_month or "").strip()
+        if not end_value:
+            return "每月持续"
+        if start_value == end_value:
+            return "仅当前月"
+        return "指定月份范围"
 
     def _stored_line_kind(self, line_kind: str) -> str:
-        return "分类预算" if line_kind == "标签预算" else line_kind
+        if line_kind in {"标签预算", "分类支出"}:
+            return "分类预算"
+        if line_kind == "单独支出":
+            return "支出"
+        if line_kind == "储蓄":
+            return "储蓄计划"
+        return line_kind
 
     def _one_line_note(self, notes: str) -> str:
         return "；".join(part.strip() for part in notes.splitlines() if part.strip())

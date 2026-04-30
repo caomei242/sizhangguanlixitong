@@ -271,6 +271,8 @@ class MonthlyTrendPoint:
     income: Any
     expense: Any
     balance: Any
+    pending_amount: Any = "0.00"
+    label: str = ""
 
 
 @dataclass

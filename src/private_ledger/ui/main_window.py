@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+import re
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from private_ledger.domain.ledger import (
     build_annual_budget_matrix,
+    build_daily_trend,
     build_budget_comparison,
     build_monthly_trend,
     build_month_summary,
@@ -50,6 +53,7 @@ from private_ledger.domain.models import (
 )
 from private_ledger.storage.repository import LedgerRepository
 from private_ledger.services.import_recognition import ImportRecognitionService
+from private_ledger.services.obsidian_sync import SYNC_SOURCE
 from private_ledger.services.keychain import KeychainStore
 from private_ledger.services.minimax_clients import MiniMaxOcrMcpClient, MiniMaxTextClient
 from private_ledger.ui.pages.accounts_page import AccountsPage
@@ -67,22 +71,78 @@ def current_month_key() -> str:
     return date.today().strftime("%Y-%m")
 
 
+OBSIDIAN_SOURCE_DATE_RE = re.compile(r"Obsidian 文件[:：].*?(\d{4}-\d{2}-\d{2})\.md")
+OBSIDIAN_SOURCE_TIME_RE = re.compile(r"来源行[:：]\s*(\d{1,2}):(\d{2})[｜|]")
+
+
+@dataclass(frozen=True)
+class ObsidianDateRepairResult:
+    repaired_count: int
+    backup_path: Path | None
+
+
+def repair_obsidian_transaction_dates(repository: LedgerRepository) -> ObsidianDateRepairResult:
+    repairs: list[tuple[Transaction, str]] = []
+    for transaction in repository.list_transactions():
+        if transaction.source != SYNC_SOURCE:
+            continue
+        date_match = OBSIDIAN_SOURCE_DATE_RE.search(transaction.notes)
+        time_match = OBSIDIAN_SOURCE_TIME_RE.search(transaction.notes)
+        if not date_match or not time_match:
+            continue
+        source_date = date_match.group(1)
+        if transaction.occurred_on[:10] == source_date:
+            continue
+        try:
+            datetime.strptime(source_date, "%Y-%m-%d")
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+        except ValueError:
+            continue
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            continue
+        repairs.append((transaction, f"{source_date} {hour:02d}:{minute:02d}"))
+
+    if not repairs:
+        return ObsidianDateRepairResult(repaired_count=0, backup_path=None)
+
+    backup_path = repository.backup_database()
+    now = now_timestamp()
+    for transaction, occurred_on in repairs:
+        transaction.occurred_on = occurred_on
+        transaction.updated_at = now
+        repository.upsert_transaction(transaction)
+    return ObsidianDateRepairResult(repaired_count=len(repairs), backup_path=backup_path)
+
+
+NAV_DASHBOARD_INDEX = 0
+NAV_BUDGETS_INDEX = 1
+NAV_ACCOUNTS_INDEX = 2
+NAV_TRANSACTIONS_INDEX = 3
+NAV_REMINDERS_INDEX = 4
+NAV_IMPORTS_INDEX = 5
+NAV_SETTINGS_INDEX = 6
+
+
 class MainWindow(QMainWindow):
     def __init__(self, repository: LedgerRepository) -> None:
         super().__init__()
         self.repository = repository
         self.keychain = KeychainStore()
         self.reference_month = current_month_key()
+        self._obsidian_date_repair_result = repair_obsidian_transaction_dates(self.repository)
         self._configure_window_behavior()
         self.setWindowTitle("草莓私帐管理系统")
         self.resize(1460, 980)
 
         self.nav = QListWidget()
-        self.nav.addItems(["月度看板", "私人账户", "流水记录", "预算计划", "充值续费", "数据导入", "设置"])
-        self.nav.setFixedWidth(192)
+        self.nav.setObjectName("MainNavigation")
+        self.nav.addItems(["月度看板", "预算计划", "私人账户", "流水记录", "充值续费", "数据导入", "设置"])
+        self.nav.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.nav.setSpacing(4)
+        self.nav.setSpacing(6)
 
         self.page_title_label = QLabel("月度看板")
         self.page_title_label.setObjectName("PageTitle")
@@ -92,7 +152,7 @@ class MainWindow(QMainWindow):
         self.page_meta_label.setMinimumWidth(0)
         self.page_meta_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.period_granularity_combo = QComboBox()
-        self.period_granularity_combo.addItems(["月", "季", "年"])
+        self.period_granularity_combo.addItems(["日", "月", "季", "年"])
         self.period_value_combo = QComboBox()
         self.month_combo = self.period_value_combo
         self.export_button = make_secondary_button("导出 JSON")
@@ -110,9 +170,9 @@ class MainWindow(QMainWindow):
         self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         for page in (
             self.dashboard_page,
+            self.budgets_page,
             self.accounts_page,
             self.transactions_page,
-            self.budgets_page,
             self.reminders_page,
             self.imports_page,
             self.settings_page,
@@ -143,6 +203,7 @@ class MainWindow(QMainWindow):
         brand_subtitle.setObjectName("BrandSubtitle")
         sidebar_note = QLabel("本地优先、保守口径、可追溯。待确认数据不会进入正式统计。")
         sidebar_note.setObjectName("MutedText")
+        sidebar_note.setProperty("sectionRole", "sidebar-note")
         sidebar_note.setWordWrap(True)
 
         brand_box = QVBoxLayout()
@@ -153,14 +214,18 @@ class MainWindow(QMainWindow):
 
         sidebar = QFrame()
         sidebar.setObjectName("WindowSidebar")
-        sidebar.setFixedWidth(264)
+        sidebar.setFixedWidth(244)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(18, 18, 18, 18)
-        sidebar_layout.setSpacing(16)
+        sidebar_layout.setContentsMargins(16, 18, 16, 18)
+        sidebar_layout.setSpacing(14)
         sidebar_layout.addLayout(brand_box)
+        sidebar_divider = QFrame()
+        sidebar_divider.setObjectName("SidebarDivider")
+        sidebar_divider.setFrameShape(QFrame.Shape.HLine)
+        sidebar_layout.addWidget(sidebar_divider)
         sidebar_layout.addWidget(self.nav, 0, Qt.AlignmentFlag.AlignTop)
-        sidebar_layout.addWidget(sidebar_note)
         sidebar_layout.addStretch(1)
+        sidebar_layout.addWidget(sidebar_note)
 
         header = QFrame()
         header.setObjectName("ToolbarCard")
@@ -221,7 +286,7 @@ class MainWindow(QMainWindow):
         self.period_granularity_combo.currentTextChanged.connect(self._handle_period_granularity_changed)
         self.period_value_combo.currentTextChanged.connect(self._handle_period_value_changed)
         self.export_button.clicked.connect(self._export_json)
-        self.quick_action_button.clicked.connect(lambda: self.nav.setCurrentRow(2))
+        self.quick_action_button.clicked.connect(lambda: self.nav.setCurrentRow(NAV_TRANSACTIONS_INDEX))
 
         self.accounts_page.account_save_requested.connect(self._save_account)
         self.accounts_page.account_delete_requested.connect(self._delete_account)
@@ -230,6 +295,8 @@ class MainWindow(QMainWindow):
 
         self.transactions_page.save_requested.connect(self._save_transaction)
         self.transactions_page.delete_requested.connect(self._delete_transaction)
+        self.transactions_page.status_update_requested.connect(self._update_transaction_status)
+        self.transactions_page.batch_status_requested.connect(self._batch_update_transaction_status)
 
         self.budgets_page.budget_save_requested.connect(self._save_budget)
         self.budgets_page.budget_line_save_requested.connect(self._save_budget_line)
@@ -256,9 +323,9 @@ class MainWindow(QMainWindow):
         if self.nav.count() == 0:
             return
         frame_height = self.nav.frameWidth() * 2
-        row_heights = sum(max(self.nav.sizeHintForRow(index), 56) for index in range(self.nav.count()))
+        row_heights = sum(max(self.nav.sizeHintForRow(index), 48) for index in range(self.nav.count()))
         spacing_height = max(0, self.nav.count() - 1) * self.nav.spacing()
-        self.nav.setFixedHeight(frame_height + row_heights + spacing_height + 12)
+        self.nav.setFixedHeight(frame_height + row_heights + spacing_height + 8)
 
     def refresh_data(self, reference_month: str | None = None) -> None:
         if reference_month:
@@ -268,8 +335,10 @@ class MainWindow(QMainWindow):
         transactions = self.repository.list_transactions()
         self._refresh_period_choices(transactions)
         selection = self._current_period_selection()
-        if selection.granularity == "month":
+        if selection.granularity in {"day", "month"}:
             self.reference_month = period_label(selection)
+            if selection.granularity == "day":
+                self.reference_month = f"{selection.year:04d}-{selection.month:02d}"
         budget = self.repository.get_monthly_budget(self.reference_month)
         budget_lines = self.repository.list_effective_budget_lines(self.reference_month)
         budget_comparison = build_budget_comparison(self.reference_month, budget_lines, transactions)
@@ -296,7 +365,11 @@ class MainWindow(QMainWindow):
             total_budget_override=budget_comparison.summary.planned_expense if budget_lines else None,
         )
         period_summary = build_period_summary(selection, transactions)
-        trend_points = build_monthly_trend(selection, transactions)
+        trend_points = (
+            build_daily_trend(selection, transactions)
+            if selection.granularity == "day"
+            else build_monthly_trend(selection, transactions)
+        )
         due_reminders = collect_due_reminders(
             reminders=reminders,
             accounts=accounts,
@@ -354,9 +427,9 @@ class MainWindow(QMainWindow):
             if transaction.occurred_on[:4].isdigit():
                 years.add(int(transaction.occurred_on[:4]))
 
-        granularity_text = self.period_granularity_combo.currentText() or "月"
+        granularity_text = self.period_granularity_combo.currentText() or "日"
         current_value = self.period_value_combo.currentText()
-        if granularity_text == "月":
+        if granularity_text in {"日", "月"}:
             values = sorted(months, reverse=True)
             preferred = self.reference_month
         elif granularity_text == "季":
@@ -379,8 +452,17 @@ class MainWindow(QMainWindow):
         self.period_value_combo.blockSignals(False)
 
     def _current_period_selection(self) -> PeriodSelection:
-        granularity_text = self.period_granularity_combo.currentText() or "月"
+        granularity_text = self.period_granularity_combo.currentText() or "日"
         value = self.period_value_combo.currentText() or self.reference_month
+        if granularity_text == "日":
+            year, month = value.split("-")
+            month_value = int(month)
+            return PeriodSelection(
+                granularity="day",
+                year=int(year),
+                month=month_value,
+                quarter=(month_value - 1) // 3 + 1,
+            )
         if granularity_text == "季":
             year_text, quarter_text = value.split(" Q")
             quarter = int(quarter_text)
@@ -501,6 +583,7 @@ class MainWindow(QMainWindow):
                 "remaining_tag": remaining_tag,
                 "pending_tag": f"{len([t for t in display_transactions if t.status != '已确认'])} 笔",
                 "period_granularity": selection.granularity,
+                "trend_granularity": selection.granularity,
                 "period_summary": period_summary,
                 "trend_points": trend_points,
                 "accounts": account_rows,
@@ -514,7 +597,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         page_title = self.nav.item(index).text() if index >= 0 else ""
         self.page_title_label.setText(page_title)
-        is_budget_page = index == 3
+        is_budget_page = index == NAV_BUDGETS_INDEX
         if is_budget_page and self.period_granularity_combo.currentText() != "月":
             self.period_granularity_combo.setCurrentText("月")
         self.period_granularity_combo.setVisible(not is_budget_page)
@@ -525,7 +608,7 @@ class MainWindow(QMainWindow):
     def _handle_period_value_changed(self, value: str) -> None:
         if not value:
             return
-        if self.period_granularity_combo.currentText() == "月":
+        if self.period_granularity_combo.currentText() in {"日", "月"}:
             self.refresh_data(reference_month=value)
         else:
             self.refresh_data()
@@ -617,6 +700,33 @@ class MainWindow(QMainWindow):
             self.repository.delete_transaction(transaction_id)
             self.refresh_data()
 
+    def _update_transaction_status(self, payload: dict) -> None:
+        transaction_id = str(payload.get("transaction_id") or "")
+        if not transaction_id:
+            return
+        status = str(payload.get("status") or "已确认")
+        transaction = next((item for item in self.repository.list_transactions() if item.id == transaction_id), None)
+        if transaction is None or transaction.status == status:
+            return
+        transaction.status = status
+        transaction.updated_at = now_timestamp()
+        self.repository.upsert_transaction(transaction)
+        self.refresh_data(reference_month=self.reference_month)
+
+    def _batch_update_transaction_status(self, payload: dict) -> None:
+        transaction_ids = set(payload.get("transaction_ids") or [])
+        if not transaction_ids:
+            return
+        status = payload.get("status") or "已确认"
+        now = now_timestamp()
+        for transaction in self.repository.list_transactions():
+            if transaction.id not in transaction_ids:
+                continue
+            transaction.status = status
+            transaction.updated_at = now
+            self.repository.upsert_transaction(transaction)
+        self.refresh_data(reference_month=self.reference_month)
+
     def _created_at_for_transaction(self, transaction_id: str) -> str:
         transaction = next((item for item in self.repository.list_transactions() if item.id == transaction_id), None)
         return transaction.created_at if transaction else now_timestamp()
@@ -646,6 +756,12 @@ class MainWindow(QMainWindow):
         if payload["effective_end_month"] and payload["effective_end_month"] < payload["effective_start_month"]:
             self._show_warning("预算项结束月份不能早于开始月份。")
             return
+        try:
+            planned_amount = parse_decimal(payload["planned_amount"])
+        except Exception:
+            self._show_warning("计划金额格式不正确，请直接填写数字。")
+            self.refresh_data(reference_month=payload["month_key"])
+            return
         budget = self.repository.get_monthly_budget(payload["month_key"])
         now = now_timestamp()
         if budget is None:
@@ -666,7 +782,7 @@ class MainWindow(QMainWindow):
             line_kind=payload["line_kind"],
             name=payload["name"],
             category=payload["category"] or payload["name"],
-            planned_amount=f"{parse_decimal(payload['planned_amount']):.2f}",
+            planned_amount=f"{planned_amount:.2f}",
             day_of_month=payload["day_of_month"],
             is_required=bool(payload["is_required"]),
             reminder_days=int(payload["reminder_days"]),
@@ -676,9 +792,101 @@ class MainWindow(QMainWindow):
             effective_start_month=payload["effective_start_month"],
             effective_end_month=payload["effective_end_month"],
         )
-        self.repository.upsert_budget_line(line)
-        self._sync_budget_total_from_lines(payload["month_key"])
+        if payload.get("link_same_budget_lines") and existing is not None:
+            affected_months = self._upsert_linked_budget_line(line, existing, payload["month_key"], now)
+        else:
+            self.repository.upsert_budget_line(line)
+            affected_months = {payload["month_key"]}
+        for month_key in affected_months:
+            self._sync_budget_total_from_lines(month_key)
         self.refresh_data(reference_month=payload["month_key"])
+
+    def _upsert_linked_budget_line(
+        self,
+        line: BudgetLine,
+        original_line: BudgetLine,
+        current_month_key: str,
+        updated_at: str,
+    ) -> set[str]:
+        """Apply an inline edit to the same budget family across months.
+
+        For long-running scopes, linked same-name monthly rows are merged into
+        the edited line to avoid duplicate budgets in later months.
+        """
+        all_lines = self._list_all_budget_lines()
+        matched_lines = [
+            candidate
+            for candidate in all_lines
+            if candidate.id != original_line.id and self._is_same_budget_family(original_line, candidate)
+        ]
+        affected_months = {current_month_key, self._month_for_budget_line(original_line.id)}
+        affected_months.update(self._month_for_budget_line(candidate.id) for candidate in matched_lines)
+        affected_months.discard("")
+
+        if line.effective_end_month == "":
+            start_months = [
+                self._budget_line_start_month(value)
+                for value in [line, *matched_lines]
+                if self._budget_line_start_month(value)
+            ]
+            if start_months:
+                line.effective_start_month = min(start_months)
+            line.effective_end_month = ""
+            self.repository.upsert_budget_line(line)
+            for candidate in matched_lines:
+                self.repository.delete_budget_line(candidate.id)
+            return affected_months
+
+        if line.effective_end_month and line.effective_end_month != line.effective_start_month:
+            self.repository.upsert_budget_line(line)
+            for candidate in matched_lines:
+                self.repository.delete_budget_line(candidate.id)
+            return affected_months
+
+        self.repository.upsert_budget_line(line)
+        for candidate in matched_lines:
+            candidate_month = self._budget_line_start_month(candidate) or self._month_for_budget_line(candidate.id) or current_month_key
+            self.repository.upsert_budget_line(
+                BudgetLine(
+                    id=candidate.id,
+                    budget_id=candidate.budget_id,
+                    line_kind=line.line_kind,
+                    name=line.name,
+                    category=line.category,
+                    planned_amount=line.planned_amount,
+                    day_of_month=line.day_of_month,
+                    is_required=line.is_required,
+                    reminder_days=line.reminder_days,
+                    notes=line.notes,
+                    created_at=candidate.created_at,
+                    updated_at=updated_at,
+                    effective_start_month=candidate_month,
+                    effective_end_month=candidate_month,
+                )
+            )
+        return affected_months
+
+    def _budget_line_start_month(self, line: BudgetLine) -> str:
+        return line.effective_start_month or self._month_for_budget_line(line.id)
+
+    def _is_same_budget_family(self, left: BudgetLine, right: BudgetLine) -> bool:
+        return self._budget_line_side(left) == self._budget_line_side(right) and self._budget_line_match_key(left) == self._budget_line_match_key(right)
+
+    def _budget_line_side(self, line: BudgetLine) -> str:
+        if line.line_kind == "收入":
+            return "收入"
+        if line.line_kind == "储蓄计划":
+            return "储蓄"
+        return "支出"
+
+    def _budget_line_match_key(self, line: BudgetLine) -> str:
+        return self._normalize_budget_match_key(line.category or line.name or "未分类")
+
+    def _normalize_budget_match_key(self, value: str) -> str:
+        normalized = (value or "").strip()
+        for suffix in ("（上个月）", "(上个月)", "（上月）", "(上月)", "（当月）", "(当月)", "（本月）", "(本月)", "（这个月）", "(这个月)"):
+            normalized = normalized.replace(suffix, "")
+        return normalized.strip() or "未分类"
 
     def _sync_annual_budget_status(self, payload: dict) -> None:
         month_key = str(payload.get("month_key") or self.reference_month)
@@ -765,7 +973,9 @@ class MainWindow(QMainWindow):
         comparison = build_budget_comparison(month_key, budget_lines, self.repository.list_transactions())
         created_count = 0
         for row in comparison.rows:
-            if row.group_name != "未设预算但本月有实际":
+            if row.line_id:
+                continue
+            if row.status not in {"未设预算", "有待确认"}:
                 continue
             if parse_decimal(row.actual_amount) <= 0:
                 continue

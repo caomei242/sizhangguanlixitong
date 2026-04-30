@@ -18,9 +18,16 @@ QFrame#WindowShell {
 }
 
 QFrame#WindowSidebar {
-    background: #f8fafc;
+    background: #fbfcff;
     border-right: 1px solid #e2e8f0;
     border-bottom-left-radius: 16px;
+}
+
+QFrame#SidebarDivider {
+    background: #e7edf6;
+    border: none;
+    min-height: 1px;
+    max-height: 1px;
 }
 
 QFrame#WindowContentShell {
@@ -118,6 +125,10 @@ QWidget[sectionRole="metric-strip"] {
 
 QWidget[sectionRole="workspace-band"] {
     background: transparent;
+}
+
+QWidget[sectionRole="workspace-tabs"] {
+    background: #f6f8fc;
 }
 
 QFrame#SectionCard[sectionRole="workspace-main"],
@@ -717,6 +728,12 @@ QLabel#BrandSubtitle {
     font-weight: 600;
 }
 
+QFrame#WindowSidebar QLabel#MutedText[sectionRole="sidebar-note"] {
+    color: #8390a6;
+    font-size: 12px;
+    line-height: 18px;
+}
+
 QLabel#PageTitle {
     color: #1c2740;
     font-size: 20px;
@@ -993,6 +1010,34 @@ QListWidget::item {
 QListWidget::item:selected {
     background: #eef4ff;
     color: #ffffff;
+}
+
+QListWidget#MainNavigation {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 2px 0;
+    outline: none;
+}
+
+QListWidget#MainNavigation::item {
+    min-height: 48px;
+    padding: 0 14px;
+    margin: 0;
+    border-radius: 12px;
+    color: #25334f;
+    font-weight: 650;
+}
+
+QListWidget#MainNavigation::item:hover {
+    background: #eef4ff;
+    color: #315fd6;
+}
+
+QListWidget#MainNavigation::item:selected {
+    background: #3f73f6;
+    color: #ffffff;
+    border: none;
 }
 
 QFrame#ListPane[sectionRole="stacked-list"] QListWidget {
@@ -1280,20 +1325,39 @@ QFrame#SectionCard[sectionRole="dashboard-transactions"] QTableWidget::item {
 }
 
 QSplitter::handle {
-    background: transparent;
+    background: #edf2fa;
+    border: none;
 }
 
 QSplitter::handle:horizontal {
     width: 10px;
 }
 
+QSplitter::handle:vertical {
+    height: 10px;
+}
+
 QSplitter::handle:horizontal:hover {
-    background: #e8eef8;
+    background: #dde7f5;
+}
+
+QSplitter::handle:vertical:hover {
+    background: #dde7f5;
 }
 
 QScrollArea,
 QAbstractScrollArea {
-    background: transparent;
+    background: #f6f8fc;
+    border: none;
+}
+
+QScrollArea QWidget[sectionRole="workspace-tabs"],
+QAbstractScrollArea QWidget[sectionRole="workspace-tabs"] {
+    background: #f6f8fc;
+}
+
+QAbstractScrollArea::viewport {
+    background: #f6f8fc;
     border: none;
 }
 
@@ -1318,6 +1382,7 @@ QScrollBar::sub-page {
 }
 
 QTabWidget::pane {
+    background: #f6f8fc;
     border: none;
 }
 
@@ -1347,6 +1412,14 @@ QTabBar::tab:hover:!selected {
 QTabBar::tab:selected {
     background: #4a7cff;
     color: #ffffff;
+}
+
+QToolTip {
+    background: #ffffff;
+    color: #20304a;
+    border: 1px solid #d8e1ef;
+    border-radius: 10px;
+    padding: 6px 8px;
 }
 """
 

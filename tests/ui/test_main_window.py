@@ -4,7 +4,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractButton, QComboBox, QFrame, QHeaderView, QLabel, QSizePolicy, QTableWidget
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QComboBox, QFrame, QHeaderView, QSizePolicy, QTableWidget
 
 from private_ledger.app import build_app
 from private_ledger.domain.models import (
@@ -15,8 +16,11 @@ from private_ledger.domain.models import (
     ReminderItem,
     Transaction,
 )
+from private_ledger.storage.repository import LedgerRepository
 from private_ledger.ui import main_window as main_window_module
 from private_ledger.ui.pages.budgets_page import BudgetsPage
+from private_ledger.ui.pages.dashboard_page import PeriodTrendChart
+from private_ledger.ui.theme import APP_STYLESHEET
 
 
 def _section_frames(widget, role: str) -> list[QFrame]:
@@ -68,96 +72,61 @@ def _annual_aux_panel(month_widgets: dict[str, object], kind: str) -> dict[str, 
     raise AssertionError(f"Missing annual auxiliary {kind} panel in keys: {sorted(month_widgets)}")
 
 
-def _status_cell_text(table: QTableWidget, row: int) -> str:
-    status_column = table.columnCount() - 1
-    texts: list[str] = []
-    status_item = table.item(row, status_column)
-    if status_item is not None and status_item.text():
-        texts.append(status_item.text())
-    cell_widget = table.cellWidget(row, status_column)
-    if cell_widget is not None:
-        if isinstance(cell_widget, QLabel) and cell_widget.text():
-            texts.append(cell_widget.text())
-        texts.extend(
-            label.text()
-            for label in cell_widget.findChildren(QLabel)
-            if label.text()
-        )
-        texts.extend(
-            button.text()
-            for button in cell_widget.findChildren(QAbstractButton)
-            if button.text()
-        )
-    return " ".join(dict.fromkeys(texts))
-
-
-def _status_cell_buttons(table: QTableWidget, row: int) -> list[QAbstractButton]:
-    status_column = table.columnCount() - 1
-    cell_widget = table.cellWidget(row, status_column)
-    if cell_widget is None:
-        return []
-    assert not isinstance(cell_widget, QComboBox)
-    assert not cell_widget.findChildren(QComboBox)
-    buttons: list[QAbstractButton] = []
-    if isinstance(cell_widget, QAbstractButton):
-        buttons.append(cell_widget)
-    buttons.extend(cell_widget.findChildren(QAbstractButton))
-    return buttons
-
-
-def _row_has_enabled_confirm_action(table: QTableWidget, row: int) -> bool:
-    return any(button.isEnabled() for button in _status_cell_buttons(table, row))
-
-
-def _click_confirm_action_for_row(table: QTableWidget, row_key: str, *, key_column: int = 0) -> bool:
-    rows = _table_rows_by_column(table, key_column)
-    row_values = rows.get(row_key)
-    if row_values is None:
-        return False
+def _select_row_by_key(table: QTableWidget, row_key: str, *, key_column: int = 0) -> bool:
     for row in range(table.rowCount()):
         key_item = table.item(row, key_column)
         if key_item is None or key_item.text() != row_key:
             continue
-        for button in _status_cell_buttons(table, row):
-            if button.isEnabled():
-                button.click()
-                return True
+        table.selectRow(row)
+        return True
     return False
 
 
-def _assert_compact_status_column(
+def _assert_compact_budget_ledger(
     table: QTableWidget,
-    *,
-    pending_names: set[str],
-    key_column: int = 0,
 ) -> None:
-    assert 88 <= table.columnWidth(0) <= 132
-    assert 88 <= table.columnWidth(1) <= 132
-    status_column = table.columnCount() - 1
-    assert table.horizontalHeader().sectionResizeMode(status_column) == QHeaderView.ResizeMode.Fixed
-    assert 116 <= table.columnWidth(status_column) <= 140
-    for row in range(table.rowCount()):
-        key_item = table.item(row, key_column)
-        assert key_item is not None
-        key_name = key_item.text()
-        status_text = _status_cell_text(table, row)
-        has_confirm_action = _row_has_enabled_confirm_action(table, row)
-        if key_name in pending_names:
-            assert "待确认" in status_text
-            assert has_confirm_action
-        else:
-            assert not has_confirm_action
+    assert table.columnCount() == 6
+    assert 88 <= table.columnWidth(0) <= 112
+    assert 88 <= table.columnWidth(1) <= 112
+    for column in range(2, table.columnCount()):
+        assert table.horizontalHeader().sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch
 
 
-def _click_pending_confirm_action(table: QTableWidget) -> bool:
-    for row in range(table.rowCount()):
-        if "待确认" not in _status_cell_text(table, row):
-            continue
-        for button in _status_cell_buttons(table, row):
-            if button.isEnabled():
-                button.click()
-                return True
-    return False
+def test_application_forces_light_appearance(tmp_path, qapp) -> None:
+    app, window = build_app(data_dir=tmp_path)
+    palette = app.palette()
+
+    assert app.style().objectName().lower() == "fusion"
+    assert palette.color(QPalette.ColorRole.Window).name().lower() == "#f5f7fb"
+    assert palette.color(QPalette.ColorRole.Base).name().lower() == "#ffffff"
+    assert palette.color(QPalette.ColorRole.ToolTipBase).name().lower() == "#ffffff"
+    assert palette.color(QPalette.ColorRole.ToolTipText).name().lower() == "#24324a"
+
+    window.close()
+
+
+def test_period_trend_chart_keeps_light_background(qapp) -> None:
+    chart = PeriodTrendChart()
+
+    assert chart.frameShape() == QFrame.Shape.NoFrame
+    assert chart.chart.isBackgroundVisible()
+    assert chart.chart.backgroundBrush().color().name().lower() == "#f7f9fc"
+    assert chart.viewport().autoFillBackground()
+
+
+def test_app_stylesheet_keeps_light_workspace_shell_rules() -> None:
+    required_fragments = (
+        'QWidget[sectionRole="workspace-tabs"]',
+        "QTabWidget::pane",
+        "QSplitter::handle",
+        "QAbstractScrollArea::viewport",
+        "QToolTip",
+    )
+
+    for fragment in required_fragments:
+        assert fragment in APP_STYLESHEET
+
+    assert "QTabWidget QWidget" not in APP_STYLESHEET
 
 
 def test_annual_month_status_keeps_pending_rows_actionable(qapp) -> None:
@@ -178,7 +147,7 @@ def test_annual_month_detail_rows_merge_salary_aliases(qapp) -> None:
             category="工资",
             notes="",
             line_kind="收入",
-            group_name="未设预算但本月有实际",
+            group_name="当期收入",
             status="未设预算",
             planned_total=Decimal("0.00"),
             planned_months={"2026-03": Decimal("0.00")},
@@ -192,7 +161,7 @@ def test_annual_month_detail_rows_merge_salary_aliases(qapp) -> None:
             category="工资（上个月）",
             notes="",
             line_kind="收入",
-            group_name="收入计划",
+            group_name="当期收入",
             status="未发生",
             planned_total=Decimal("11642.00"),
             planned_months={"2026-03": Decimal("11642.00")},
@@ -303,6 +272,23 @@ def test_main_window_shows_navigation_and_loaded_dashboard_data(tmp_path, qapp) 
             updated_at="2026-04-18T19:00:00",
         )
     )
+    repo.upsert_transaction(
+        Transaction(
+            id="txn-pending",
+            occurred_on="2026-04-19",
+            transaction_type="支出",
+            category="待确认",
+            amount="30.00",
+            from_account_id="acc-main",
+            to_account_id="",
+            status="待确认",
+            source="手动录入",
+            notes="",
+            related_transaction_id="",
+            created_at="2026-04-19T19:00:00",
+            updated_at="2026-04-19T19:00:00",
+        )
+    )
     repo.upsert_budget(
         MonthlyBudget(
             id="budget-2026-04",
@@ -346,6 +332,17 @@ def test_main_window_shows_navigation_and_loaded_dashboard_data(tmp_path, qapp) 
         "近期待处理",
         "最近流水",
     ]
+    assert window.period_granularity_combo.currentText() == "日"
+    assert window.period_value_combo.currentText() == "2026-04"
+    assert window.dashboard_page.trend_chart.chart.title() == "按日趋势"
+    assert window.dashboard_page.trend_chart.series_count_for_test() == 4
+    assert window.dashboard_page.trend_table.rowCount() == 30
+    hover_summary = window.dashboard_page.trend_chart.hover_summary_for_test(17)
+    assert "18日" in hover_summary
+    assert "收入：" in hover_summary
+    assert "支出：" in hover_summary
+    assert "结余：" in hover_summary
+    assert "待确认：" in hover_summary
     assert "8,000.00" in window.dashboard_page.total_budget_card.value_label.text()
     assert window.dashboard_page.overview_accounts_table.rowCount() == 1
     assert window.dashboard_page.overview_reminders_list.count() == 1
@@ -414,7 +411,7 @@ def test_dashboard_period_controls_show_year_summary(tmp_path, qapp) -> None:
     assert window.dashboard_page.expense_card.value_label.text() == "¥600.00"
     assert window.dashboard_page.balance_card.value_label.text() == "¥400.00"
     assert window.dashboard_page.pending_amount_card.value_label.text() == "¥200.00"
-    assert window.dashboard_page.trend_chart.series_count_for_test() == 3
+    assert window.dashboard_page.trend_chart.series_count_for_test() == 4
     assert window.dashboard_page.trend_table.rowCount() == 12
     assert window.dashboard_page.trend_chart.minimumHeight() >= 340
     assert window.dashboard_page.trend_table.isHidden()
@@ -475,25 +472,23 @@ def test_budget_page_shows_comparison_and_generates_draft_lines(tmp_path, qapp) 
         repo.upsert_transaction(transaction)
 
     window.refresh_data(reference_month="2026-04")
-    window.nav.setCurrentRow(3)
+    window.nav.setCurrentRow(1)
     page = window.budgets_page
 
     assert window.period_granularity_combo.isHidden()
     assert page.month_edit.parent() is not None
     assert not page.month_edit.isHidden()
+    assert isinstance(page.month_edit, QComboBox)
+    assert page.month_edit.count() == 12
+    assert page.month_edit.itemText(0) == "2026-01"
+    assert page.month_edit.itemText(11) == "2026-12"
     tab_texts = [page.tabs.tabText(index) for index in range(page.tabs.count())]
-    assert len(tab_texts) == 5
-    assert any("工作台" in text for text in tab_texts)
-    assert any("全年" in text for text in tab_texts)
-    assert any("收入" in text for text in tab_texts)
-    assert any("支出" in text for text in tab_texts)
-    assert any("生效" in text for text in tab_texts)
+    assert tab_texts == ["预算工作台", "全年十二月", "生效范围"]
     assert "工作台" in page.tabs.tabText(page.tabs.currentIndex())
     assert page.workbench_splitter.orientation() == Qt.Orientation.Horizontal
-    assert page.workbench_splitter.count() == 2
+    assert page.workbench_splitter.count() == 0
     assert _section_frames(page, "budget-workbench")
-    assert _section_frames(page, "budget-workbench-primary")
-    assert len(_section_frames(page, "budget-ledger")) >= 2
+    assert _section_frames(page, "budget-comparison-panel")
     assert _section_frames(page, "budget-workbench-editor")
     assert _section_frames(page, "annual-summary")
     assert _section_frames(page, "annual-accordion")
@@ -506,9 +501,24 @@ def test_budget_page_shows_comparison_and_generates_draft_lines(tmp_path, qapp) 
     assert len(page.effective_scope_rows) == 3
     assert page.income_table.rowCount() >= 2
     assert page.expense_table.rowCount() >= 2
-    assert page.income_table.horizontalHeaderItem(2).text() == "标签"
-    assert page.income_table.horizontalHeaderItem(3).text() == "备注"
-    assert page.income_table.horizontalHeaderItem(4).text() == "生效月份"
+    assert page.comparison_table.horizontalHeaderItem(3).text() == "生效方式"
+    assert page.comparison_table.horizontalHeaderItem(4).text() == "开始月份"
+    assert page.comparison_table.horizontalHeaderItem(5).text() == "结束月份"
+    assert page.link_same_budget_checkbox.text() == "联动同名项目"
+    group_rows = [
+        page.comparison_table.item(row, 0).text().strip()
+        for row in range(page.comparison_table.rowCount())
+        if page.comparison_table.item(row, 0)
+        and page.comparison_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        and page.comparison_table.item(row, 0).data(Qt.ItemDataRole.UserRole).get("is_group")
+    ]
+    assert [text.split("】", 1)[0].lstrip("【") for text in group_rows[:5]] == [
+        "长期收入",
+        "当期收入",
+        "长期支出",
+        "当期支出",
+        "储蓄",
+    ]
     assert page.tag_filter_combo.findText("工资") >= 0
     assert page.tag_filter_combo.findText("餐饮") >= 0
     assert page.seed_from_actual_button.isEnabled()
@@ -594,14 +604,14 @@ def test_dashboard_and_budget_page_use_effective_budget_lines_across_months(tmp_
 def test_budget_page_saves_effective_mode_from_editor(tmp_path, qapp) -> None:
     _app, window = build_app(data_dir=tmp_path)
     window.refresh_data(reference_month="2026-04")
-    window.nav.setCurrentRow(3)
+    window.nav.setCurrentRow(1)
     page = window.budgets_page
 
     page.kind_combo.setCurrentText("固定支出")
     page.name_edit.setText("房租")
     page.category_edit.setText("房租")
     page.planned_amount_edit.setText("2500")
-    page.effective_mode_combo.setCurrentText("从当前月起")
+    page.effective_mode_combo.setCurrentText("每月持续")
     page.save_line_button.click()
     qapp.processEvents()
 
@@ -610,6 +620,123 @@ def test_budget_page_saves_effective_mode_from_editor(tmp_path, qapp) -> None:
     assert lines[0].name == "房租"
     assert lines[0].effective_start_month == "2026-04"
     assert lines[0].effective_end_month == ""
+
+    window.close()
+
+
+def test_budget_page_supports_inline_workbench_editing(tmp_path, qapp) -> None:
+    _app, window = build_app(data_dir=tmp_path)
+    repo = window.repository
+    repo.upsert_budget(
+        MonthlyBudget(
+            id="budget-2026-04",
+            month_key="2026-04",
+            total_budget="0.00",
+            notes="",
+            status="生效中",
+            created_at="2026-04-01T09:00:00",
+            updated_at="2026-04-01T09:00:00",
+        )
+    )
+    repo.upsert_budget_line(
+        BudgetLine(
+            id="line-salary",
+            budget_id="budget-2026-04",
+            line_kind="收入",
+            name="工资（上个月）",
+            category="工资（上个月）",
+            planned_amount="11642.00",
+            day_of_month=None,
+            is_required=False,
+            reminder_days=0,
+            notes="每月十号发上个月工资",
+            created_at="2026-04-01T09:00:00",
+            updated_at="2026-04-01T09:00:00",
+            effective_start_month="2026-04",
+            effective_end_month="2026-04",
+        )
+    )
+    repo.upsert_budget(
+        MonthlyBudget(
+            id="budget-2026-05",
+            month_key="2026-05",
+            total_budget="0.00",
+            notes="",
+            status="生效中",
+            created_at="2026-05-01T09:00:00",
+            updated_at="2026-05-01T09:00:00",
+        )
+    )
+    repo.upsert_budget_line(
+        BudgetLine(
+            id="line-salary-may",
+            budget_id="budget-2026-05",
+            line_kind="收入",
+            name="工资",
+            category="工资",
+            planned_amount="11642.00",
+            day_of_month=None,
+            is_required=False,
+            reminder_days=0,
+            notes="五月工资草稿",
+            created_at="2026-05-01T09:00:00",
+            updated_at="2026-05-01T09:00:00",
+            effective_start_month="2026-05",
+            effective_end_month="2026-05",
+        )
+    )
+
+    window.refresh_data(reference_month="2026-04")
+    window.nav.setCurrentRow(1)
+    page = window.budgets_page
+
+    assert _select_row_by_key(page.comparison_table, "工资（上个月）")
+    current_row = page.comparison_table.currentRow()
+    planned_item = page.comparison_table.item(current_row, 6)
+    actual_item = page.comparison_table.item(current_row, 7)
+    type_item = page.comparison_table.item(current_row, 1)
+    mode_item = page.comparison_table.item(current_row, 3)
+    assert planned_item.flags() & Qt.ItemFlag.ItemIsEditable
+    assert type_item.flags() & Qt.ItemFlag.ItemIsEditable
+    assert mode_item.flags() & Qt.ItemFlag.ItemIsEditable
+    assert not (actual_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    assert page.comparison_table.itemDelegateForColumn(1) is not None
+    assert page.comparison_table.itemDelegateForColumn(3) is not None
+
+    planned_item.setText("12000")
+    qapp.processEvents()
+    assert repo.get_budget_line("line-salary").planned_amount == "12000.00"
+    assert repo.get_budget_line("line-salary-may").planned_amount == "11642.00"
+
+    assert _select_row_by_key(page.comparison_table, "工资（上个月）")
+    current_row = page.comparison_table.currentRow()
+    category_item = page.comparison_table.item(current_row, 2)
+    category_item.setText("工资")
+    qapp.processEvents()
+    assert repo.get_budget_line("line-salary").category == "工资"
+
+    assert _select_row_by_key(page.comparison_table, "工资（上个月）")
+    current_row = page.comparison_table.currentRow()
+    page.link_same_budget_checkbox.setChecked(True)
+    effective_item = page.comparison_table.item(current_row, 3)
+    effective_item.setText("每月持续")
+    qapp.processEvents()
+    updated_line = repo.get_budget_line("line-salary")
+    assert updated_line.effective_start_month == "2026-04"
+    assert updated_line.effective_end_month == ""
+    assert repo.get_budget_line("line-salary-may") is None
+    assert len([line for line in repo.list_effective_budget_lines("2026-05") if line.category == "工资"]) == 1
+    assert _select_row_by_key(page.comparison_table, "工资（上个月）")
+    assert page.comparison_table.item(page.comparison_table.currentRow() - 1, 0).text().strip().startswith("【长期收入】")
+
+    current_row = page.comparison_table.currentRow()
+    page.comparison_table.item(current_row, 3).setText("仅当前月")
+    qapp.processEvents()
+    updated_line = repo.get_budget_line("line-salary")
+    assert updated_line.effective_start_month == "2026-04"
+    assert updated_line.effective_end_month == "2026-04"
+    assert _select_row_by_key(page.comparison_table, "工资（上个月）")
+    assert page.comparison_table.item(page.comparison_table.currentRow() - 1, 0).text().strip().startswith("【当期收入】")
 
     window.close()
 
@@ -700,7 +827,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
             months=months,
             detail_rows=[
                 SimpleNamespace(
-                    group_name="收入计划",
+                    group_name="长期收入",
                     line_kind="收入",
                     name="工资",
                     category="工资",
@@ -722,7 +849,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="收入计划",
+                    group_name="长期收入",
                     line_kind="收入",
                     name="网店收入",
                     category="网店收入",
@@ -744,7 +871,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="收入计划",
+                    group_name="当期收入",
                     line_kind="收入",
                     name="兼职奖金",
                     category="奖金",
@@ -761,7 +888,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="收入计划",
+                    group_name="当期收入",
                     line_kind="收入",
                     name="房租补贴（当月）",
                     category="房租补贴（当月）",
@@ -778,7 +905,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="支出预算",
+                    group_name="长期支出",
                     line_kind="分类预算",
                     name="日常餐饮",
                     category="餐饮",
@@ -799,7 +926,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     status="超支",
                 ),
                 SimpleNamespace(
-                    group_name="支出预算",
+                    group_name="长期支出",
                     line_kind="分类预算",
                     name="其他杂费",
                     category="其他支出",
@@ -821,7 +948,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="支出预算",
+                    group_name="当期支出",
                     line_kind="分类预算",
                     name="话费充值",
                     category="话费",
@@ -838,7 +965,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="未设预算",
+                    group_name="当期支出",
                     line_kind="分类预算",
                     name="临时交通",
                     category="交通",
@@ -855,7 +982,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
                     notes="",
                 ),
                 SimpleNamespace(
-                    group_name="固定支出",
+                    group_name="当期支出",
                     line_kind="固定支出",
                     name="年末支出",
                     category="年末支出",
@@ -1081,7 +1208,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
         repo.upsert_transaction(transaction)
 
     window.refresh_data(reference_month="2026-04")
-    window.nav.setCurrentRow(3)
+    window.nav.setCurrentRow(1)
     page = window.budgets_page
 
     assert page.tabs.tabText(page.tabs.currentIndex()) == "预算工作台"
@@ -1132,11 +1259,15 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
     assert income_panel["planned_label"].text() == "计划 ¥3,100.00"
     assert income_panel["actual_label"].text() == "实际 ¥1,560.00"
     assert income_panel["pending_label"].text() == "待确认 ¥1,800.00"
+    assert income_panel["confirm_selected_button"].text() == "确认选中项"
+    assert income_panel["confirm_selected_button"].isEnabled()
     assert income_panel["confirm_all_button"].text() == "确认本区待确认"
     assert income_panel["confirm_all_button"].isEnabled()
     assert expense_panel["planned_label"].text() == "计划 ¥920.00"
     assert expense_panel["actual_label"].text() == "实际 ¥780.00"
     assert expense_panel["pending_label"].text() == "待确认 ¥300.00"
+    assert expense_panel["confirm_selected_button"].text() == "确认选中项"
+    assert expense_panel["confirm_selected_button"].isEnabled()
     assert expense_panel["confirm_all_button"].text() == "确认本区待确认"
     assert expense_panel["confirm_all_button"].isEnabled()
     assert "临时" in temp_income_panel["title"].text()
@@ -1154,17 +1285,17 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
     temp_income_rows = _table_rows_by_name(temp_income_panel["table"])
     temp_expense_rows = _table_rows_by_name(temp_expense_panel["table"])
     assert set(income_rows) == {"工资", "房租补贴（当月）", "网店收入"}
-    assert income_rows["工资"] == ["工资", "工资", "¥1,000.00", "¥1,300.00", "¥0.00", "+¥300.00", "已达成"]
-    assert income_rows["网店收入"] == ["网店收入", "网店收入", "¥300.00", "¥260.00", "¥0.00", "¥-40.00", "进行中"]
-    assert income_rows["房租补贴（当月）"] == ["房租补贴（当月）", "房租补贴（当月）", "¥1,800.00", "¥0.00", "¥1,800.00", "¥-1,800.00", "待确认"]
+    assert income_rows["工资"] == ["工资", "工资", "¥1,000.00", "¥1,300.00", "¥0.00", "+¥300.00"]
+    assert income_rows["网店收入"] == ["网店收入", "网店收入", "¥300.00", "¥260.00", "¥0.00", "¥-40.00"]
+    assert income_rows["房租补贴（当月）"] == ["房租补贴（当月）", "房租补贴（当月）", "¥1,800.00", "¥0.00", "¥1,800.00", "¥-1,800.00"]
     assert set(expense_rows) == {"其他杂费", "日常餐饮", "话费充值"}
-    assert expense_rows["日常餐饮"] == ["日常餐饮", "餐饮", "¥500.00", "¥680.00", "¥0.00", "¥-180.00", "超支"]
-    assert expense_rows["其他杂费"] == ["其他杂费", "其他支出", "¥120.00", "¥100.00", "¥0.00", "+¥20.00", "已达成"]
-    assert expense_rows["话费充值"] == ["话费充值", "话费", "¥300.00", "¥0.00", "¥300.00", "+¥300.00", "待确认"]
+    assert expense_rows["日常餐饮"] == ["日常餐饮", "餐饮", "¥500.00", "¥680.00", "¥0.00", "¥-180.00"]
+    assert expense_rows["其他杂费"] == ["其他杂费", "其他支出", "¥120.00", "¥100.00", "¥0.00", "+¥20.00"]
+    assert expense_rows["话费充值"] == ["话费充值", "话费", "¥300.00", "¥0.00", "¥300.00", "+¥300.00"]
     assert set(temp_income_rows) == {"兼职奖金"}
-    assert temp_income_rows["兼职奖金"] == ["兼职奖金", "奖金", "¥200.00", "¥240.00", "¥0.00", "+¥40.00", "已达成"]
+    assert temp_income_rows["兼职奖金"] == ["兼职奖金", "奖金", "¥200.00", "¥240.00", "¥0.00", "+¥40.00"]
     assert set(temp_expense_rows) == {"临时交通"}
-    assert temp_expense_rows["临时交通"] == ["临时交通", "交通", "¥0.00", "¥60.00", "¥20.00", "¥-60.00", "待确认"]
+    assert temp_expense_rows["临时交通"] == ["临时交通", "交通", "¥0.00", "¥60.00", "¥20.00", "¥-60.00"]
     assert {"工资", "房租补贴（当月）", "网店收入"}.isdisjoint(temp_income_rows)
     assert {"其他杂费", "日常餐饮", "话费充值"}.isdisjoint(temp_expense_rows)
     for table in (
@@ -1175,12 +1306,12 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
     ):
         _assert_table_has_no_vertical_scroll(table)
 
-    _assert_compact_status_column(income_panel["table"], pending_names={"房租补贴（当月）"})
-    _assert_compact_status_column(expense_panel["table"], pending_names={"话费充值"})
-    _assert_compact_status_column(temp_income_panel["table"], pending_names=set())
-    _assert_compact_status_column(temp_expense_panel["table"], pending_names={"临时交通"})
+    _assert_compact_budget_ledger(income_panel["table"])
+    _assert_compact_budget_ledger(expense_panel["table"])
+    _assert_compact_budget_ledger(temp_income_panel["table"])
+    _assert_compact_budget_ledger(temp_expense_panel["table"])
 
-    expense_panel["confirm_all_button"].click()
+    expense_panel["confirm_selected_button"].click()
     qapp.processEvents()
     assert next(txn for txn in repo.list_transactions() if txn.id == "txn-apr-phone-pending").status == "已确认"
 
@@ -1199,21 +1330,17 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
     assert not temp_expense_panel["table"].isHidden()
     _assert_table_has_no_vertical_scroll(temp_income_panel["table"])
     _assert_table_has_no_vertical_scroll(temp_expense_panel["table"])
-    assert _click_confirm_action_for_row(temp_expense_panel["table"], "临时交通")
+    assert _select_row_by_key(temp_expense_panel["table"], "临时交通")
+    assert temp_expense_panel["confirm_same_button"].isEnabled()
+    temp_expense_panel["confirm_same_button"].click()
     qapp.processEvents()
     assert next(txn for txn in repo.list_transactions() if txn.id == "txn-apr-traffic-pending").status == "已确认"
 
-    if any(
-        _click_pending_confirm_action(table)
-        for table in (
-            income_panel["table"],
-            expense_panel["table"],
-            temp_income_panel["table"],
-            temp_expense_panel["table"],
-        )
-    ):
-        qapp.processEvents()
-        assert next(txn for txn in repo.list_transactions() if txn.id == "txn-apr-rent-subsidy").status == "已确认"
+    assert _select_row_by_key(income_panel["table"], "房租补贴（当月）")
+    assert income_panel["confirm_selected_button"].isEnabled()
+    income_panel["confirm_selected_button"].click()
+    qapp.processEvents()
+    assert next(txn for txn in repo.list_transactions() if txn.id == "txn-apr-rent-subsidy").status == "已确认"
 
     temp_income_panel["toggle"].click()
     temp_expense_panel["toggle"].click()
@@ -1231,7 +1358,7 @@ def test_budget_page_shows_readonly_annual_matrix_without_breaking_monthly_edito
     assert page.name_edit.text() == ""
 
     page.tabs.setCurrentIndex(0)
-    page.kind_combo.setCurrentText("标签预算")
+    page.kind_combo.setCurrentText("分类支出")
     page.name_edit.setText("咖啡")
     page.category_edit.setText("餐饮")
     page.planned_amount_edit.setText("120")
@@ -1267,7 +1394,7 @@ def test_transactions_page_filters_by_tag_and_shows_notes(tmp_path, qapp) -> Non
         ),
         Transaction(
             id="txn-traffic",
-            occurred_on="2026-04-09",
+            occurred_on="2026-04-09 09:00",
             transaction_type="支出",
             category="交通",
             amount="12.00",
@@ -1280,28 +1407,208 @@ def test_transactions_page_filters_by_tag_and_shows_notes(tmp_path, qapp) -> Non
             created_at="2026-04-09T12:00:00",
             updated_at="2026-04-09T12:00:00",
         ),
+        Transaction(
+            id="txn-income",
+            occurred_on="2026-04-10",
+            transaction_type="收入",
+            category="工资",
+            amount="1200.00",
+            from_account_id="",
+            to_account_id="",
+            status="已确认",
+            source="测试",
+            notes="工资备注",
+            related_transaction_id="",
+            created_at="2026-04-10T12:00:00",
+            updated_at="2026-04-10T12:00:00",
+        ),
+        Transaction(
+            id="txn-obsidian",
+            occurred_on="2026-04-10",
+            transaction_type="支出",
+            category="日常零花",
+            amount="19.52",
+            from_account_id="",
+            to_account_id="",
+            status="已确认",
+            source="Obsidian 私帐自动同步",
+            notes=(
+                "同步来源：Obsidian 私帐自动同步\n"
+                "Obsidian 文件：/Users/gd/Library/Mobile Documents/私帐/2026-04-29.md\n"
+                "标签：日常零花\n"
+                "商户/备注：好邻居超市(思明店)\n"
+                "来源行：02:47｜19.52 元｜好邻居超市(思明店)\n"
+                "采集批次：2026-04-30T10:33:03"
+            ),
+            related_transaction_id="",
+            created_at="2026-04-10T12:00:00",
+            updated_at="2026-04-10T12:00:00",
+        ),
+        Transaction(
+            id="txn-system-notes",
+            occurred_on="2026-04-11",
+            transaction_type="支出",
+            category="系统备注",
+            amount="20.04",
+            from_account_id="",
+            to_account_id="",
+            status="已确认",
+            source="Excel 导入",
+            notes=(
+                "来源文件：账单_202604261854.xlsx\n"
+                "原始行号：2\n"
+                "账期口径：按 Excel 日期列原样导入\n"
+                "金额口径：按收支类型保留方向，入库金额统一存正数\n"
+                "账户：源文件为空，待确认\n"
+                "原始分类：购物消费/其他\n"
+                "原始备注：好邻居超市(思明店)"
+            ),
+            related_transaction_id="",
+            created_at="2026-04-11T12:00:00",
+            updated_at="2026-04-11T12:00:00",
+        ),
+        Transaction(
+            id="txn-system-only",
+            occurred_on="2026-04-12",
+            transaction_type="支出",
+            category="纯系统备注",
+            amount="9.90",
+            from_account_id="",
+            to_account_id="",
+            status="已确认",
+            source="Excel 导入",
+            notes=(
+                "来源文件：账单_202604261854.xlsx\n"
+                "原始行号：3\n"
+                "账期口径：按 Excel 日期列原样导入\n"
+                "金额口径：按收支类型保留方向，入库金额统一存正数\n"
+                "账户：源文件为空，待确认"
+            ),
+            related_transaction_id="",
+            created_at="2026-04-12T12:00:00",
+            updated_at="2026-04-12T12:00:00",
+        ),
     ]:
         repo.upsert_transaction(transaction)
 
     window.refresh_data(reference_month="2026-04")
-    window.nav.setCurrentRow(2)
+    window.nav.setCurrentRow(3)
     page = window.transactions_page
 
-    assert page.table.horizontalHeaderItem(2).text() == "标签"
-    assert page.table.horizontalHeaderItem(3).text() == "备注"
+    assert page.table.horizontalHeaderItem(0).text() == "选择"
+    assert page.table.horizontalHeaderItem(3).text() == "标签"
+    assert page.table.horizontalHeaderItem(4).text() == "备注"
+    assert page.type_filter_combo.currentText() == "全部类型"
     assert page.tag_filter_combo.findText("餐饮") >= 0
     assert page.tag_filter_combo.findText("交通") >= 0
 
     page.tag_filter_combo.setCurrentText("餐饮")
     assert page.table.rowCount() == 1
-    assert page.table.item(0, 2).text() == "餐饮"
-    assert page.table.item(0, 3).text() == "午餐备注"
+    assert page.table.item(0, 3).text() == "餐饮"
+    assert page.table.item(0, 4).text() == "午餐备注"
 
     page.clear_filter_button.click()
     qapp.processEvents()
-    assert page.table.rowCount() == 2
+    assert page.table.rowCount() == 6
+    page.type_filter_combo.setCurrentText("只看收入")
+    qapp.processEvents()
+    assert page.table.rowCount() == 1
+    assert page.table.item(0, 2).text() == "收入"
+    page.type_filter_combo.setCurrentText("只看支出")
+    qapp.processEvents()
+    assert page.table.rowCount() == 5
+    assert all(page.table.item(row, 2).text() == "支出" for row in range(page.table.rowCount()))
+    page.clear_filter_button.click()
+    qapp.processEvents()
+    assert page.type_filter_combo.currentText() == "全部类型"
+    assert page.table.rowCount() == 6
+    assert _select_row_by_key(page.table, "日常零花", key_column=3)
+    assert page.table.item(page.table.currentRow(), 4).text() == "好邻居超市(思明店)"
+    assert "Obsidian 文件" in page.table.item(page.table.currentRow(), 4).toolTip()
+    assert _select_row_by_key(page.table, "系统备注", key_column=3)
+    assert page.table.item(page.table.currentRow(), 4).text() == "好邻居超市(思明店)"
+    assert "账单_202604261854.xlsx" in page.table.item(page.table.currentRow(), 4).toolTip()
+    assert _select_row_by_key(page.table, "纯系统备注", key_column=3)
+    assert page.table.item(page.table.currentRow(), 4).text() == ""
+    assert "金额口径" in page.table.item(page.table.currentRow(), 4).toolTip()
+    assert _select_row_by_key(page.table, "交通", key_column=3)
+    assert page.date_edit.date().toString("yyyy-MM-dd") == "2026-04-09"
+    page.status_combo.setCurrentText("已确认")
+    qapp.processEvents()
+    traffic = {item.id: item for item in repo.list_transactions()}["txn-traffic"]
+    assert traffic.status == "已确认"
+    assert traffic.occurred_on == "2026-04-09 09:00"
+
+    for row in range(page.table.rowCount()):
+        checkbox_item = page.table.item(row, 0)
+        if checkbox_item is not None:
+            checkbox_item.setCheckState(Qt.CheckState.Checked)
+    page.batch_status_combo.setCurrentText("批量改为待确认")
+    page.batch_status_button.click()
+    qapp.processEvents()
+    statuses = {item.id: item.status for item in repo.list_transactions()}
+    assert statuses["txn-food"] == "待确认"
+    assert statuses["txn-traffic"] == "待确认"
 
     window.close()
+
+
+def test_repairs_obsidian_transaction_dates_from_source_notes(tmp_path) -> None:
+    repo = LedgerRepository(data_dir=tmp_path)
+    repo.upsert_transaction(
+        Transaction(
+            id="txn-wrong-date",
+            occurred_on="2026-04-30",
+            transaction_type="支出",
+            category="佛山税务",
+            amount="200.00",
+            from_account_id="",
+            to_account_id="",
+            status="已确认",
+            source=main_window_module.SYNC_SOURCE,
+            notes=(
+                "同步来源：Obsidian 私帐自动同步\n"
+                "Obsidian 文件：/Users/gd/个人日志/财务/私帐/每日收集/2026-04-28.md\n"
+                "标签：佛山税务\n"
+                "商户/备注：缴税业务\n"
+                "来源行：15:30｜200.00 元｜缴税业务"
+            ),
+            related_transaction_id="",
+            created_at="2026-04-29T10:00:00",
+            updated_at="2026-04-30T10:00:00",
+        )
+    )
+    repo.upsert_transaction(
+        Transaction(
+            id="txn-unclear-date",
+            occurred_on="2026-04-30",
+            transaction_type="支出",
+            category="日常零花",
+            amount="20.00",
+            from_account_id="",
+            to_account_id="",
+            status="已确认",
+            source=main_window_module.SYNC_SOURCE,
+            notes="Obsidian 文件：/Users/gd/个人日志/财务/私帐/每日收集/2026-04-27.md\n来源行：缺少时间",
+            related_transaction_id="",
+            created_at="2026-04-29T10:00:00",
+            updated_at="2026-04-30T10:00:00",
+        )
+    )
+
+    result = main_window_module.repair_obsidian_transaction_dates(repo)
+    transactions = {item.id: item for item in repo.list_transactions()}
+
+    assert result.repaired_count == 1
+    assert result.backup_path is not None
+    assert result.backup_path.exists()
+    assert transactions["txn-wrong-date"].occurred_on == "2026-04-28 15:30"
+    assert transactions["txn-unclear-date"].occurred_on == "2026-04-30"
+
+    second_result = main_window_module.repair_obsidian_transaction_dates(repo)
+    assert second_result.repaired_count == 0
+    assert second_result.backup_path is None
+    repo.close()
 
 
 def test_reminders_page_shows_expected_names_and_traffic_lights(tmp_path, qapp) -> None:
